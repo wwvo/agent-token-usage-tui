@@ -37,3 +37,30 @@ reqwest = { version = "0.13.2", default-features = false, features = ["rustls", 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 tempfile = "3.27.0"
+
+# Strict lint policy (inspired by Codex's workspace lints; see plan/codex-best-practices.md).
+# Test code overrides for `unwrap_used` / `expect_used` live in `clippy.toml`.
+[lints.clippy]
+# Correctness: surface panics that should be Result propagation.
+expect_used = "deny"
+unwrap_used = "deny"
+
+# Style: keep format strings readable and idioms consistent.
+uninlined_format_args = "deny"
+redundant_closure_for_method_calls = "deny"
+needless_borrow = "deny"
+manual_clamp = "deny"
+implicit_clone = "deny"
+explicit_iter_loop = "deny"
+explicit_into_iter_loop = "deny"
+
+# Anti-patterns we never want in production code.
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+large_enum_variant = "deny"
+
+# Output hygiene: TUI mode must not write to stdout/stderr directly (use tracing).
+print_stdout = "deny"
+print_stderr = "deny"
+
+# Release profile: aggressive size optimization for single-binary distribution.

@@ -1,0 +1,6 @@
+# Per-crate Clippy overrides. Workspace-level lints live in Cargo.toml [lints.clippy].
+#
+# Tests are written for brevity: unwrap/expect are allowed so that fixture setup
+# and assertions stay readable. Mainline code stays strictly denied.
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
