@@ -21,6 +21,7 @@ use anyhow::Context;
 use anyhow::Result;
 use rusqlite::Connection;
 
+pub mod costs;
 pub mod file_state;
 pub mod pricing;
 pub mod records;
