@@ -1,0 +1,158 @@
+# Tag-triggered release pipeline for agent-token-usage-tui.
+#
+# Produces per-platform `.tar.gz` / `.zip` archives + SHA-256 checksums
+# and attaches them to a GitHub Release matching the pushed tag. The
+# primary distribution channel is cnb.cool (`.cnb.yml` produces Linux
+# tarballs there); this workflow is the GitHub-mirror equivalent, covering
+# the three OSes cnb.cool can't provision natively.
+#
+# Trigger: any tag that looks like a semver release (`vX.Y.Z`, optionally
+# with `-<pre>` / `+<build>` suffixes). Push to a non-v* tag won't match.
+#
+# Matrix targets (only what we can realistically test):
+#   - x86_64-unknown-linux-gnu   (ubuntu-latest)
+#   - x86_64-pc-windows-msvc     (windows-latest)
+#   - x86_64-apple-darwin        (macos-13, Intel)
+#   - aarch64-apple-darwin       (macos-14, Apple Silicon)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+# Gatekeep concurrent release runs for the *same* tag. Two pushes of the
+# same tag (e.g. force-retag) queue up instead of racing to upload.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # needed to publish the GitHub Release + assets
+
+env:
+  CARGO_TERM_COLOR: always
+  AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            bin: atut
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            bin: atut.exe
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: tar.gz
+            bin: atut
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+            bin: atut
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Target-scoped cache key so different matrix legs don't invalidate
+      # each other: the Linux leg's `target/release/` layout differs
+      # enough from Windows that shared caches thrash.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --profile dist --locked --target ${{ matrix.target }}
+
+      # Cargo emits the artifact into
+      # `target/<target>/dist/<bin>`. The `dist` profile already sets
+      # `strip = true`; we don't re-strip here because cross-compiled
+      # binutils aren't always available on every runner OS.
+      - name: Stage archive contents
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#refs/tags/}"
+          stage="atut-${tag}-${{ matrix.target }}"
+          mkdir -p "${stage}"
+          cp "target/${{ matrix.target }}/dist/${{ matrix.bin }}" "${stage}/"
+          cp README.md CHANGELOG.md LICENSE "${stage}/"
+          echo "stage=${stage}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="${{ steps.stage.outputs.stage }}"
+          tar czf "${stage}.tar.gz" "${stage}"
+          shasum -a 256 "${stage}.tar.gz" > "${stage}.tar.gz.sha256"
+          ls -la "${stage}.tar.gz"*
+
+      - name: Pack archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $stage = "${{ steps.stage.outputs.stage }}"
+          Compress-Archive -Path "$stage" -DestinationPath "$stage.zip"
+          $hash = Get-FileHash -Path "$stage.zip" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  $stage.zip" | Out-File -Encoding ascii -FilePath "$stage.zip.sha256"
+          Get-ChildItem "$stage.zip*"
+
+      - name: Upload archive as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stage.outputs.stage }}
+          path: |
+            ${{ steps.stage.outputs.stage }}.${{ matrix.archive }}
+            ${{ steps.stage.outputs.stage }}.${{ matrix.archive }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show assets
+        shell: bash
+        run: ls -la dist/
+
+      # `softprops/action-gh-release` creates the release if missing and
+      # attaches every file we downloaded. We let it auto-extract a name
+      # from the tag; a manually-curated changelog body lives in
+      # `CHANGELOG.md`, which the user can copy-paste onto the release
+      # page post-hoc if they want narrative notes.
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/*
