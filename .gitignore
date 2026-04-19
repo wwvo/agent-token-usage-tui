@@ -14,6 +14,11 @@ pricing.json
 # build.rs downloaded asset (regenerated every build)
 /assets/litellm-prices.fallback.json
 
+# git-cliff preview output (CHANGELOG.md is hand-curated; this file is
+# a throw-away dry run, e.g. `git-cliff -o CHANGELOG.auto.md`).
+CHANGELOG.auto.md
+release-notes.md
+
 # Editors / IDEs
 .vscode/
 .idea/
