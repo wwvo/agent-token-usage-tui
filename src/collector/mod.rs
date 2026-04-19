@@ -20,6 +20,7 @@ pub mod claude;
 pub mod reporter;
 pub mod util;
 
+pub use claude::ClaudeCollector;
 pub use reporter::ChannelReporter;
 pub use reporter::NoopReporter;
 pub use reporter::Reporter;
