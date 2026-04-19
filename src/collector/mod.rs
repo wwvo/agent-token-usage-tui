@@ -17,10 +17,12 @@
 //! | M4 C3 | Windsurf (placeholder; real exporter lands in Phase 2) |
 
 pub mod claude;
+pub mod codex;
 pub mod reporter;
 pub mod util;
 
 pub use claude::ClaudeCollector;
+pub use codex::CodexCollector;
 pub use reporter::ChannelReporter;
 pub use reporter::NoopReporter;
 pub use reporter::Reporter;
