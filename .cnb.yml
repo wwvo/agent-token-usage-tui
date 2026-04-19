@@ -105,12 +105,20 @@ $:
 
   # Release pipelines — one per Linux architecture. Each produces a
   # stripped binary inside a versioned tarball plus a side-by-side
-  # sha256 checksum, left in the workspace root so cnb's UI can expose
-  # them as downloadable pipeline artifacts.
+  # sha256 checksum, attaches them to the tag's cnb Release object, and
+  # leaves copies in the workspace root (so cnb's UI also exposes them
+  # as plain pipeline artifacts).
   #
   # Naming:
   #   atut-<tag>-<arch>-linux.tar.gz     ← binary + LICENSE + README + CHANGELOG
   #   atut-<tag>-<arch>-linux.tar.gz.sha256
+  #
+  # Release lifecycle:
+  #   amd64 leg is the Release owner. It runs `git:release` once to
+  #   create (or update) the Release, then emits a `cnb:resolve` so the
+  #   arm64 leg, which is waiting on `cnb:await`, can attach its own
+  #   tarball. Without this handshake the arm64 upload could race the
+  #   Release-creation and fail with "tag has no release".
   #
   # Tag resolution: `$CNB_BRANCH` in a `tag_push` build equals the tag
   # name (e.g. `v0.1.1`). We still shell out to `git describe --tags
@@ -158,6 +166,48 @@ $:
             tar czf "${STAGE}.tar.gz" "${STAGE}"
             sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
             ls -la "${STAGE}.tar.gz"*
+        - name: extract-release-notes
+          # Carve out the CHANGELOG stanza for this exact version so the
+          # Release description mirrors what users would read in source.
+          # awk: start printing after `## [X.Y.Z]`, stop at the next
+          # `## [` heading. If no match (e.g. an unreleased tag), fall
+          # back to a one-liner so `git:release` still has *some* body.
+          script: |
+            set -eu
+            TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
+            VERSION="${TAG#v}"
+            awk "/^## \\[${VERSION}\\]/{flag=1; next} /^## \\[/{flag=0} flag" \
+              CHANGELOG.md > release-notes.md
+            if [ ! -s release-notes.md ]; then
+              echo "See [CHANGELOG.md](./CHANGELOG.md) for release notes." > release-notes.md
+            fi
+            head -n 20 release-notes.md
+        - name: create-release
+          type: git:release
+          options:
+            # tag_push event: cnb auto-fills tag from $CNB_BRANCH.
+            # overlying=true: update the Release in place instead of
+            # deleting + recreating on each tag re-push; that would
+            # also nuke any attachments the arm64 leg had uploaded.
+            overlying: true
+            title: "${CNB_BRANCH}"
+            descriptionFromFile: release-notes.md
+            latest: true
+        - name: signal-release-ready
+          # Unblocks the arm64 leg's `cnb:await`. Must come *after*
+          # `create-release`; resolving before the Release exists would
+          # let arm64 race ahead and see a 404.
+          type: cnb:resolve
+          options:
+            key: atut-release-ready
+        - name: upload-amd64-assets
+          image: cnbcool/attachments:latest
+          settings:
+            # Globbed so a future arch or rename doesn't need a yaml
+            # touch-up — only the amd64 tarball + checksum matches here.
+            attachments:
+              - "./atut-*-amd64-linux.tar.gz"
+              - "./atut-*-amd64-linux.tar.gz.sha256"
 
     - name: release-linux-arm64
       runner:
@@ -189,3 +239,16 @@ $:
             tar czf "${STAGE}.tar.gz" "${STAGE}"
             sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
             ls -la "${STAGE}.tar.gz"*
+        - name: wait-release-ready
+          # Block until the amd64 leg has created the Release. Pairs
+          # with its `cnb:resolve` of the same key. Without this, an
+          # attachments upload for a tag with no Release yet errors out.
+          type: cnb:await
+          options:
+            key: atut-release-ready
+        - name: upload-arm64-assets
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./atut-*-arm64-linux.tar.gz"
+              - "./atut-*-arm64-linux.tar.gz.sha256"
