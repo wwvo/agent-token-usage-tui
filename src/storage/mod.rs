@@ -21,7 +21,10 @@ use anyhow::Context;
 use anyhow::Result;
 use rusqlite::Connection;
 
+pub mod file_state;
 pub mod schema;
+
+pub use file_state::FileScanContext;
 
 /// Owned handle to the portable SQLite database.
 ///
@@ -68,7 +71,6 @@ impl Db {
     /// recover the inner guard rather than propagating the panic — at the
     /// SQLite layer poisoning is almost always benign (read-only corruption
     /// of cached statements), and killing the process is worse than continuing.
-    #[allow(dead_code)] // First used by M2 C3 (`records` module). Remove allow then.
     pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
         match self.conn.lock() {
             Ok(guard) => guard,
