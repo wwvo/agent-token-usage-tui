@@ -63,4 +63,30 @@ large_enum_variant = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 
-# Release profile: aggressive size optimization for single-binary distribution.
+# ---- Release profiles --------------------------------------------------------
+#
+# The default `cargo build --release` should produce the binary users actually
+# ship — small, fast, no debug metadata. Full LTO + single codegen unit gives
+# meaningful size savings for a ratatui + rusqlite + reqwest binary at the
+# cost of a noticeably longer link step (expected ~3 min on a cold build).
+# panic=abort drops unwind tables; we don't ship rescue paths that rely on
+# catch_unwind.
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
+
+# `cargo build --profile dist` is the release-style profile for distributable
+# artifacts: everything release has, plus extra aggressive size trims we
+# wouldn't want polluting day-to-day builds (debug-assertions off, overflow
+# checks off, incremental off). Inherits from `release` via the `inherits` key.
+
+[profile.dist]
+inherits = "release"
+debug = false
+overflow-checks = false
+debug-assertions = false
