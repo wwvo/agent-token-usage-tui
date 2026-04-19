@@ -1,0 +1,97 @@
+# .cnb.yml — cnb.cool CI pipelines
+#
+# Reference: https://docs.cnb.cool/zh/build/grammar.html
+#
+# Triggers
+# --------
+# - `main.push`        → fmt-check + clippy + test on amd64,
+#                        plus test-only on arm64 (catches arch-specific bugs
+#                        without doubling the lint cost).
+# - `$.pull_request`   → fmt-check + clippy + test on amd64 for any branch
+#                        opening a PR. `$` is cnb's catch-all branch match,
+#                        so PR branches don't also match the `main` key.
+#
+# Environment
+# -----------
+# - `AGENT_TUI_DISABLE_LITELLM_DOWNLOAD=1` disables `build.rs`'s network
+#   fetch of the litellm pricing catalog. CI runners tend to hit GitHub
+#   raw's rate limit; the repo ships a baked-in fallback that is already
+#   fresh enough for tests.
+# - `CARGO_TERM_COLOR=always` keeps clippy / test output colored in the
+#   cnb log panel (web UI preserves ANSI escapes).
+#
+# Images & runners
+# ----------------
+# - `rust:1.85-slim` matches the crate's `rust-version = "1.85"` MSRV.
+#   We pin the minor on purpose: bumping implicitly via `:slim` would
+#   silently raise the MSRV floor.
+# - `libssl-dev` / `pkg-config` are needed by reqwest's default TLS
+#   backend; `git` is needed for `--locked` parity with local dev.
+# - `ca-certificates` keeps `cargo fetch` from failing TLS on slim images.
+# - `--locked` on every cargo command so CI can't silently bump
+#   `Cargo.lock` — repro parity with the committed lockfile is the whole
+#   reason we commit it.
+
+main:
+  push:
+    - name: lint-and-test-amd64
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: rust:1.85-slim
+      env:
+        AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+        CARGO_TERM_COLOR: "always"
+      stages:
+        - name: apt-deps
+          script: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              libssl-dev pkg-config git ca-certificates
+        - name: fmt-check
+          script: cargo fmt --check
+        - name: clippy
+          script: cargo clippy --all-targets --locked -- -D warnings
+        - name: test
+          script: cargo test --locked
+
+    - name: test-arm64
+      runner:
+        tags: cnb:arch:arm64:v8
+      docker:
+        image: rust:1.85-slim
+      env:
+        AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+      stages:
+        - name: apt-deps
+          script: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              libssl-dev pkg-config git ca-certificates
+        - name: test
+          script: cargo test --locked
+
+# Catch-all branch (`$`) — PR events. Lives separately from `main.push`
+# so a merge to `main` doesn't run amd64 fmt+clippy+test twice.
+$:
+  pull_request:
+    - name: lint-and-test-pr
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: rust:1.85-slim
+      env:
+        AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+        CARGO_TERM_COLOR: "always"
+      stages:
+        - name: apt-deps
+          script: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              libssl-dev pkg-config git ca-certificates
+        - name: fmt-check
+          script: cargo fmt --check
+        - name: clippy
+          script: cargo clippy --all-targets --locked -- -D warnings
+        - name: test
+          script: cargo test --locked
