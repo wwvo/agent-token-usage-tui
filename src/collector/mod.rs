@@ -16,6 +16,7 @@
 //! | M4 C2 | OpenCode (SQLite read-only) |
 //! | M4 C3 | Windsurf (placeholder; real exporter lands in Phase 2) |
 
+pub mod claude;
 pub mod reporter;
 pub mod util;
 
