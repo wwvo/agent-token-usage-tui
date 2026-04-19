@@ -66,15 +66,16 @@ impl Db {
 
     /// Acquire the underlying connection guard.
     ///
-    /// Crate-private: higher-level modules (`records`, `pricing`, `queries`)
-    /// build typed APIs on top of this; the public surface of `Db` stays free
-    /// of `rusqlite` types.
+    /// Higher-level modules (`records`, `pricing`, `queries`) build typed APIs
+    /// on top of this; downstream consumers — including the CLI, TUI and
+    /// integration tests — can also reach for this as an escape hatch when
+    /// they need read-only SQL beyond what the typed wrappers cover.
     ///
     /// If the mutex is poisoned (another thread panicked while holding it),
     /// recover the inner guard rather than propagating the panic — at the
     /// SQLite layer poisoning is almost always benign (read-only corruption
     /// of cached statements), and killing the process is worse than continuing.
-    pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
+    pub fn lock(&self) -> MutexGuard<'_, Connection> {
         match self.conn.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
