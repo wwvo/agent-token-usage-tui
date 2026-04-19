@@ -94,7 +94,16 @@ pub enum Commands {
 /// them and choosing an exit code.
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    logging::init(LogMode::Stderr)?;
+
+    // Route log output so it doesn't collide with user-facing modes:
+    // the TUI owns stderr (raw mode + alt screen), so it needs File; every
+    // other subcommand is line-oriented and benefits from immediate stderr.
+    let mode = if cli.command.is_none() {
+        LogMode::File
+    } else {
+        LogMode::Stderr
+    };
+    logging::init(mode)?;
 
     match cli.command {
         None => run_tui(&cli),

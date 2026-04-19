@@ -11,13 +11,18 @@ fn stderr_init_is_idempotent() {
 }
 
 #[test]
-fn file_mode_returns_todo_error_until_m7() {
-    let err = init(LogMode::File).expect_err("File mode must error before M7 C1");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("M7 C1"),
-        "error must reference M7 C1 landing point; got: {msg}",
-    );
+fn init_file_into_creates_log_directory_and_returns_guard() {
+    use tempfile::tempdir;
+    let tmp = tempdir().expect("tempdir");
+    let dir = tmp.path().join("logs");
+    // Dir doesn't exist yet; init_file_into must create it.
+    assert!(!dir.exists(), "precondition: log dir does not pre-exist");
+
+    let _guard = init_file_into(dir.clone()).expect("file logging init");
+    assert!(dir.exists(), "log dir must be created");
+    assert!(dir.is_dir());
+    // Guard dropping here is fine for the test; this asserts the API shape,
+    // not the actual file writes (those happen asynchronously in a worker).
 }
 
 #[test]
