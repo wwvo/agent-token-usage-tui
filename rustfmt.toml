@@ -1,0 +1,5 @@
+edition = "2024"
+# Nightly-only for now; enable by running `cargo +nightly fmt` to normalize
+# imports. Stable rustfmt emits a harmless warning and keeps the default
+# "Preserve" granularity; CI `cargo fmt --check` still passes.
+imports_granularity = "Item"

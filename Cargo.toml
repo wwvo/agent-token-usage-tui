@@ -1,0 +1,15 @@
+[package]
+name = "agent-token-usage-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Cross-platform TUI that aggregates Claude Code / Codex / OpenClaw / OpenCode sessions and reports token usage and cost."
+repository = "https://github.com/briqt/agent-token-usage-tui"
+readme = "README.md"
+keywords = ["tui", "ai", "token", "usage", "cost"]
+categories = ["command-line-utilities", "visualization"]
+
+[[bin]]
+name = "agent-token-usage-tui"
+path = "src/main.rs"

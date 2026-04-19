@@ -1,0 +1,29 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Portable runtime artifacts (written next to the exe)
+*.db
+*.db-wal
+*.db-shm
+*.log
+/log/
+pricing.json
+
+# build.rs downloaded asset (regenerated every build)
+/assets/litellm-prices.fallback.json
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.envrc
+
+# OS-specific junk
+ehthumbs.db

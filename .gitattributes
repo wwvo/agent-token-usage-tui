@@ -1,0 +1,16 @@
+# Enforce LF line endings across all platforms; matches .editorconfig.
+* text=auto eol=lf
+
+# Binary formats — never touch.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.db      binary
+*.sqlite  binary
+
+# Windows batch / PowerShell scripts keep CRLF.
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
