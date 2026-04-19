@@ -2,7 +2,7 @@
   "name": "agent-token-usage-tui-windsurf-exporter",
   "displayName": "Agent Token Usage (Windsurf Exporter)",
   "description": "Thin companion extension for `agent-token-usage-tui`: polls Windsurf Cascade trajectories and writes them to JSONL files on disk so the Rust TUI can ingest them.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "agent-token-usage-tui",
   "license": "Apache-2.0",
   "homepage": "https://cnb.cool/prevailna/agent-token-usage-tui",
