@@ -93,7 +93,10 @@ fn version_subcommand_prints_name_commit_build_and_rust_lines() {
     assert!(output.status.success(), "version should exit 0");
 
     let stdout = String::from_utf8(output.stdout).expect("utf8");
-    assert!(stdout.contains("agent-token-usage-tui"), "missing package name");
+    assert!(
+        stdout.contains("agent-token-usage-tui"),
+        "missing package name"
+    );
     assert!(stdout.contains("commit: "), "missing commit line");
     assert!(stdout.contains("build: "), "missing build-date line");
     assert!(stdout.contains("rust: "), "missing rust line");
