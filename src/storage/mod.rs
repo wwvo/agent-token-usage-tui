@@ -83,6 +83,12 @@ impl Db {
     }
 }
 
+pub mod queries;
+
+pub use queries::ModelTally;
+pub use queries::SessionSummary;
+pub use queries::SourceTally;
+
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
