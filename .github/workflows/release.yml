@@ -114,8 +114,22 @@ jobs:
         shell: bash
         run: cross build --profile dist --locked --target ${{ matrix.target }}
 
+      # Windows MSVC targets use pwsh, not bash. Under `shell: bash`
+      # the MSYS2 `/usr/bin` precedes MSVC's bin dir on PATH, so rustc
+      # invokes `C:\Program Files\Git\usr\bin\link.exe` — that's GNU
+      # coreutils' POSIX hard-link helper, not the MSVC linker — and
+      # build-scripts fail with:
+      #     /usr/bin/link: extra operand '...build_script_build-*.o'
+      # pwsh inherits the runner's native PATH order so `link.exe`
+      # resolves to VS's Hostx64\x64\link.exe as intended. Matches the
+      # wwvo/cnb-rs build.yml split.
+      - name: Build release binary (cargo, Windows MSVC)
+        if: ${{ !matrix.use_cross && endsWith(matrix.target, '-pc-windows-msvc') }}
+        shell: pwsh
+        run: cargo build --profile dist --locked --target ${{ matrix.target }}
+
       - name: Build release binary (cargo)
-        if: ${{ !matrix.use_cross }}
+        if: ${{ !matrix.use_cross && !endsWith(matrix.target, '-pc-windows-msvc') }}
         shell: bash
         run: cargo build --profile dist --locked --target ${{ matrix.target }}
 
