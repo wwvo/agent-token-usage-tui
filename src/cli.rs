@@ -135,11 +135,14 @@ fn run_tui(cli: &Cli) -> Result<()> {
         .context("build tokio runtime for TUI")?;
 
     rt.block_on(async {
+        let startup = crate::startup_ui::StartupReporter;
         if !cli.no_prices {
+            startup.step_start("syncing pricing");
             match sync_or_fallback(&db, PRICING_FRESHNESS).await {
-                Ok(_) => {}
+                Ok(outcome) => startup.step_done("syncing pricing", &format!("{outcome}")),
                 Err(e) => {
-                    tracing::warn!(error = %e, "pricing sync failed; continuing with stale/missing prices");
+                    tracing::warn!(error = %e, "pricing sync failed");
+                    startup.step_warn("syncing pricing", &format!("{e:#}"));
                 }
             }
         }
@@ -151,10 +154,11 @@ fn run_tui(cli: &Cli) -> Result<()> {
                     crate::pipeline::PipelineConfig::default()
                 }
             };
-            match pipeline_run_scan(&db, &NoopReporter, &pipeline_cfg).await {
+            match pipeline_run_scan(&db, &startup, &pipeline_cfg).await {
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, "scan pipeline failed; continuing with existing DB");
+                    startup.step_warn("scan pipeline", &format!("{e:#}"));
                 }
             }
         }

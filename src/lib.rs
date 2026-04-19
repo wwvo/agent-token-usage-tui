@@ -12,5 +12,6 @@ pub mod domain;
 pub mod logging;
 pub mod pipeline;
 pub mod pricing;
+pub mod startup_ui;
 pub mod storage;
 pub mod tui;

@@ -79,19 +79,19 @@ pub async fn run_scan(
     let mut summaries: Vec<ScanSummary> = Vec::with_capacity(5);
 
     let claude = ClaudeCollector::with_default_paths();
-    summaries.push(claude.scan(db, reporter).await?);
+    summaries.push(run_one(&claude, db, reporter).await?);
 
     let codex = CodexCollector::with_default_paths();
-    summaries.push(codex.scan(db, reporter).await?);
+    summaries.push(run_one(&codex, db, reporter).await?);
 
     let openclaw = OpenClawCollector::new(config.openclaw_bases.clone());
-    summaries.push(openclaw.scan(db, reporter).await?);
+    summaries.push(run_one(&openclaw, db, reporter).await?);
 
     let opencode = OpenCodeCollector::new(config.opencode_dbs.clone());
-    summaries.push(opencode.scan(db, reporter).await?);
+    summaries.push(run_one(&opencode, db, reporter).await?);
 
     let windsurf = WindsurfCollector::new(config.windsurf_bases.clone());
-    summaries.push(windsurf.scan(db, reporter).await?);
+    summaries.push(run_one(&windsurf, db, reporter).await?);
 
     // Best-effort cost recompute; empty pricing table → 0 rows, no warnings.
     let prices = db.get_all_pricing()?;
@@ -105,6 +105,24 @@ pub async fn run_scan(
         summaries,
         costs_recalculated,
     })
+}
+
+/// Invoke one collector with lifecycle hooks on the reporter.
+///
+/// Calls `on_source_start` before the collector runs and `on_source_finished`
+/// afterward — both hooks have `Reporter` default impls so legacy
+/// reporters (`NoopReporter`, test fakes) are unaffected. The TUI's
+/// startup reporter overrides them to draw progress lines.
+async fn run_one<C: Collector>(
+    collector: &C,
+    db: &Db,
+    reporter: &dyn Reporter,
+) -> Result<ScanSummary> {
+    let source = collector.source();
+    reporter.on_source_start(source);
+    let summary = collector.scan(db, reporter).await?;
+    reporter.on_source_finished(source, &summary);
+    Ok(summary)
 }
 
 #[cfg(test)]

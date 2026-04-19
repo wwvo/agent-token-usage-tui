@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc::Sender;
 
+use super::ScanSummary;
 use crate::domain::Source;
 
 /// One progress tick reported from a collector.
@@ -27,13 +28,30 @@ pub struct ScanProgress {
 /// Contract every progress sink implements.
 ///
 /// `Send + Sync` so any reporter can be shared via `&dyn Reporter` across async
-/// tasks; `on_progress` is deliberately synchronous — collectors call it from
+/// tasks; every method is deliberately synchronous — collectors call them from
 /// hot paths and we don't want to sprinkle `.await` across them.
 pub trait Reporter: Send + Sync {
     /// Non-blocking delivery of one tick. Implementations that use bounded
     /// channels SHOULD drop (not block) when full so slow UIs never stall a
     /// scan.
     fn on_progress(&self, progress: ScanProgress);
+
+    /// Called by the pipeline **once** per source before its collector runs.
+    ///
+    /// Default is a no-op so existing impls (tests, `NoopReporter`) keep
+    /// working without churn. The TUI startup reporter overrides this to
+    /// print a "[  ] scanning {source}..." line.
+    fn on_source_start(&self, source: Source) {
+        let _ = source;
+    }
+
+    /// Called by the pipeline **once** per source after its collector returns.
+    ///
+    /// `summary` is the exact [`ScanSummary`] that will appear in
+    /// [`crate::pipeline::ScanReport::summaries`].
+    fn on_source_finished(&self, source: Source, summary: &ScanSummary) {
+        let _ = (source, summary);
+    }
 }
 
 /// `Reporter` that drops every tick on the floor.

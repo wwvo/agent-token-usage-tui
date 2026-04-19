@@ -33,6 +33,20 @@ pub enum PricingSyncOutcome {
     UsedFallback { models: usize },
 }
 
+impl std::fmt::Display for PricingSyncOutcome {
+    /// Human-readable form for startup / CLI summaries.
+    ///
+    /// Shape: "<N> models (<source>)" — concise enough to append to a
+    /// progress line, detailed enough for a bug report.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StillFresh { models } => write!(f, "{models} models (fresh)"),
+            Self::FetchedFromNetwork { models } => write!(f, "{models} models (network)"),
+            Self::UsedFallback { models } => write!(f, "{models} models (fallback)"),
+        }
+    }
+}
+
 /// Keep DB pricing fresh, falling back to the embedded snapshot when needed.
 ///
 /// Three-tier cascade:
