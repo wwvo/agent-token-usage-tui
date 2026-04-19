@@ -1,6 +1,5 @@
 # agent-token-usage-tui
 
-[![CI](https://github.com/briqt/agent-token-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/briqt/agent-token-usage-tui/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
 > Cross-platform terminal UI that aggregates **Claude Code / Codex / OpenClaw / OpenCode** sessions and reports token usage and cost.

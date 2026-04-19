@@ -52,9 +52,9 @@ First public release. Everything below is new.
   or `~/.local/share`.
 - **Logging** — daily rolling files at `log/atut.log.YYYY-MM-DD` for TUI
   mode; direct stderr for CLI subcommands. Non-blocking background writer.
-- **Release profile** — fat LTO + `codegen-units = 1` + `panic = abort`
-  + `strip = symbols`. Opt-in `dist` profile inherits from `release` and
-  turns off debug-assertions / overflow-checks for final binary shrink.
+- **Release profile** — fat LTO + `codegen-units = 1` + `panic = abort`,
+  plus `strip = symbols`. Opt-in `dist` profile inherits from `release`
+  and turns off debug-assertions / overflow-checks for final binary shrink.
 
 ### Infrastructure
 
@@ -77,5 +77,5 @@ First public release. Everything below is new.
 - No per-model drill-down from the Models view; only Overview → Sessions
   filtering is wired up.
 
-[Unreleased]: https://github.com/briqt/agent-token-usage-tui/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/briqt/agent-token-usage-tui/releases/tag/v0.1.0
+[Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...HEAD
+[0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
