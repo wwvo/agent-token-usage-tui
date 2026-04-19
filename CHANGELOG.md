@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-19
+
+Release-automation tooling release. No end-user behavior change; the
+pipeline now builds the Release page itself instead of leaving bare
+tarballs floating on the tag, and a `git-cliff` config keeps the
+commit-history-to-changelog path reproducible.
+
+### Added
+
+- **cnb.cool Release automation** (`.cnb.yml`): `tag_push` now runs a
+  `git:release` stage that creates the cnb Release, then the amd64 and
+  arm64 tarball legs upload themselves as Release attachments via the
+  `cnbcool/attachments` plugin. The cross-job handshake uses cnb's
+  `cnb:await` / `cnb:resolve` so both arches publish against the same
+  Release instead of racing to create it.
+- **`cliff.toml`** at the repo root: git-cliff 2.x configuration that
+  mirrors the repo's commit convention (emoji subject prefix, Chinese
+  body, `Why:` / `Footer:` sections). Produces Keep a Changelog-style
+  grouped output with links to cnb.cool commits, and drives the next
+  `--bump` tag computation. `CHANGELOG.md` stays hand-curated; this
+  config is for previews, release-note drafts, and CI seed material.
+
+### Fixed
+
+- **`CHANGELOG.md`**: the `[0.2.1]` section was missing even though the
+  tag shipped; the reference-link footer also had a duplicate block
+  from an earlier merge. Both corrected, version-compare links now
+  form a clean chain back to `v0.1.0`.
+
+### Documentation
+
+- **README**: `git clone` URL now points at the real cnb.cool remote
+  instead of the placeholder GitHub path.
+
 ## [0.2.1] — 2026-04-19
 
 CI hotfix release. No functional changes beyond the pipeline repairs
@@ -155,7 +189,8 @@ First public release. Everything below is new.
 - No per-model drill-down from the Models view; only Overview → Sessions
   filtering is wired up. (Addressed in `[0.2.0]`.)
 
-[Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.1...HEAD
+[Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.2...HEAD
+[0.2.2]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.1...v0.2.2
 [0.2.1]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.0...v0.2.1
 [0.2.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...v0.2.0
 [0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
