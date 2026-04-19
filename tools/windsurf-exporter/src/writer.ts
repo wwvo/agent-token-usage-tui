@@ -68,6 +68,36 @@ export interface TurnUsageLine {
     cached_input_tokens: number;
 }
 
+/**
+ * Per-CHECKPOINT step line carrying Windsurf's own USD estimate.
+ *
+ * Exists for cross-checking atut's `pricing::cost::calc_cost` against
+ * the server's own figure — when `|ours - theirs|` drifts past a few
+ * percent, atut's litellm snapshot is probably stale relative to
+ * Windsurf's production pricing. Written defensively: we only emit a
+ * line when the extractor found a concrete non-zero cost on the step,
+ * so a wrong guess about `metadata.modelCost`'s shape degrades to
+ * "no data" rather than "bogus data".
+ *
+ * The Rust collector (`collector::windsurf`) stores these in the
+ * `windsurf_cost_diffs` table; they never land in `usage_records`
+ * (which would double-count Windsurf's USD against our own).
+ */
+export interface CheckpointCostLine {
+    type: "checkpoint_cost";
+    step_id: string;
+    timestamp: string;
+    model: string;
+    /** Windsurf's running USD estimate at this checkpoint. */
+    server_cost_usd: number;
+    /** Server's own input-token accounting; `0` if not reported. */
+    server_input_tokens: number;
+    /** Server's own output-token accounting; `0` if not reported. */
+    server_output_tokens: number;
+    /** Server's cache-read accounting; `0` if not reported. */
+    server_cache_read_tokens: number;
+}
+
 /** Bookkeeping returned from `writeSession` so the extension can log progress. */
 export interface WriteStats {
     /** `true` iff we appended the `session_meta` line in this call. */
@@ -78,6 +108,12 @@ export interface WriteStats {
     turnsSkipped: number;
     /** Count of input steps that had no usage / wrong type; never written. */
     turnsIgnored: number;
+    /** Count of `checkpoint_cost` lines appended this call. */
+    checkpointsInserted: number;
+    /** Count of checkpoint steps that were already on disk (by `step_id`). */
+    checkpointsSkipped: number;
+    /** Count of checkpoint steps that had no extractable cost; never written. */
+    checkpointsIgnored: number;
 }
 
 // ---- Directory resolution ------------------------------------------------
@@ -120,16 +156,18 @@ export function sessionFilePath(dir: string, cascadeId: string): string {
  */
 export function loadExistingState(filePath: string): {
     stepIds: Set<string>;
+    checkpointIds: Set<string>;
     hasSessionMeta: boolean;
 } {
     const stepIds = new Set<string>();
+    const checkpointIds = new Set<string>();
     let hasSessionMeta = false;
     let raw: string;
     try {
         raw = fs.readFileSync(filePath, "utf8");
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-            return { stepIds, hasSessionMeta };
+            return { stepIds, checkpointIds, hasSessionMeta };
         }
         throw err;
     }
@@ -154,10 +192,19 @@ export function loadExistingState(filePath: string): {
             obj.type === "turn_usage" &&
             typeof obj.step_id === "string"
         ) {
+            // Turn-id dedup: kept separate from checkpoint ids so the
+            // `detectIdStyle` heuristic ("does this file use synthetic
+            // `turn-<N>` or UUID?") isn't confused by the UUIDs we
+            // write for checkpoints.
             stepIds.add(obj.step_id);
+        } else if (
+            obj.type === "checkpoint_cost" &&
+            typeof obj.step_id === "string"
+        ) {
+            checkpointIds.add(obj.step_id);
         }
     }
-    return { stepIds, hasSessionMeta };
+    return { stepIds, checkpointIds, hasSessionMeta };
 }
 
 // ---- Append ---------------------------------------------------------------
@@ -182,13 +229,17 @@ export function writeSession(
 ): WriteStats {
     fs.mkdirSync(dir, { recursive: true });
     const filePath = sessionFilePath(dir, cascadeId);
-    const { stepIds, hasSessionMeta } = loadExistingState(filePath);
+    const { stepIds, checkpointIds, hasSessionMeta } =
+        loadExistingState(filePath);
 
     const stats: WriteStats = {
         sessionMetaWritten: false,
         turnsInserted: 0,
         turnsSkipped: 0,
         turnsIgnored: 0,
+        checkpointsInserted: 0,
+        checkpointsSkipped: 0,
+        checkpointsIgnored: 0,
     };
 
     if (!hasSessionMeta) {
@@ -221,6 +272,18 @@ export function writeSession(
     for (const step of steps) {
         const partial = extractTurnUsage(step, summary);
         if (!partial) {
+            // Not a user-input turn; maybe it's a checkpoint worth
+            // extracting a server cost from. Checkpoints are accounted
+            // for entirely separately — their step_id lives in
+            // `checkpointIds`, and they never influence `idStyle` or
+            // `validTurnsSoFar`.
+            appendCheckpointCostIfAny(
+                filePath,
+                step,
+                summary,
+                checkpointIds,
+                stats,
+            );
             stats.turnsIgnored++;
             continue;
         }
@@ -249,6 +312,46 @@ export function writeSession(
     return stats;
 }
 
+// ---- Internal: checkpoint_cost emission ----------------------------------
+
+/**
+ * Emit a `checkpoint_cost` line for `step` if the extractor finds one.
+ *
+ * Idempotent on `checkpointIds`; mutates `stats` in place. Split out of
+ * `writeSession` so the main loop stays focused on turn_usage.
+ */
+function appendCheckpointCostIfAny(
+    filePath: string,
+    step: CascadeStep,
+    summary: TrajectorySummary,
+    checkpointIds: Set<string>,
+    stats: WriteStats,
+): void {
+    const partial = extractCheckpointCost(step, summary);
+    if (!partial) {
+        return;
+    }
+    const id = step.metadata?.executionId;
+    if (!id) {
+        // Without a stable id we can't dedup — skip rather than emit a
+        // line that'd get written on every refresh.
+        stats.checkpointsIgnored++;
+        return;
+    }
+    if (checkpointIds.has(id)) {
+        stats.checkpointsSkipped++;
+        return;
+    }
+    const line: CheckpointCostLine = {
+        type: "checkpoint_cost",
+        step_id: id,
+        ...partial,
+    };
+    fs.appendFileSync(filePath, `${JSON.stringify(line)}\n`, "utf8");
+    checkpointIds.add(id);
+    stats.checkpointsInserted++;
+}
+
 /**
  * Decide whether to keep writing synthetic `turn-<N>` ids (because the
  * file was started by a pre-v0.2.10 exporter) or switch to UUID ids.
@@ -264,6 +367,115 @@ function detectIdStyle(stepIds: Set<string>): "synthetic" | "uuid" {
         }
     }
     return "uuid";
+}
+
+// ---- Internal: step → CheckpointCostLine --------------------------------
+
+/** Subset of `CheckpointCostLine` that `extractCheckpointCost` can fill in. */
+type CheckpointCostPayload = Omit<CheckpointCostLine, "type" | "step_id">;
+
+/**
+ * Pull a `checkpoint_cost` payload out of a Cascade step, or `null` if
+ * the step isn't a checkpoint with usable cost data.
+ *
+ * **Speculative shape.** The v0.2.9 retention probe confirmed that
+ * `CORTEX_STEP_TYPE_CHECKPOINT` steps carry a `metadata.modelCost` +
+ * `metadata.modelUsage` blob, but the probe dump didn't pin down the
+ * exact field names inside those blobs. The extractor here tries a
+ * handful of plausible layouts before giving up; `null` → no line gets
+ * written, so a wrong guess costs us cross-check data but never corrupts
+ * on-disk rows. When someone does a proper probe they can narrow the
+ * extraction to the real field names with confidence.
+ */
+function extractCheckpointCost(
+    step: CascadeStep,
+    summary: TrajectorySummary,
+): CheckpointCostPayload | null {
+    if (step.type !== "CORTEX_STEP_TYPE_CHECKPOINT") {
+        return null;
+    }
+
+    const cost = pickNumber(step.metadata?.modelCost, [
+        "totalCostUsd",
+        "totalCost",
+        "costUsd",
+        "cost",
+        "value",
+        "usd",
+    ]);
+    if (cost === null || cost <= 0) {
+        return null;
+    }
+
+    const usage = step.metadata?.modelUsage;
+    const inputTokens =
+        pickNumber(usage, ["inputTokens", "input_tokens", "input", "prompt"]) ??
+        0;
+    const outputTokens =
+        pickNumber(usage, [
+            "outputTokens",
+            "output_tokens",
+            "output",
+            "completion",
+        ]) ?? 0;
+    const cacheRead =
+        pickNumber(usage, [
+            "cacheReadTokens",
+            "cache_read_tokens",
+            "cachedInputTokens",
+            "cached_input_tokens",
+            "cacheRead",
+        ]) ?? 0;
+
+    const timestamp =
+        step.metadata?.createdAt ||
+        step.timestamp ||
+        summary.lastModifiedTime ||
+        summary.lastUserInputTime ||
+        summary.createdTime ||
+        "";
+
+    return {
+        timestamp,
+        model:
+            step.metadata?.requestedModelUid ??
+            summary.lastGeneratorModelUid ??
+            "",
+        server_cost_usd: cost,
+        server_input_tokens: inputTokens,
+        server_output_tokens: outputTokens,
+        server_cache_read_tokens: cacheRead,
+    };
+}
+
+/**
+ * Probe `record[key]` for each candidate key, returning the first finite
+ * number found. `null` means no match — callers should treat that as
+ * "field absent" rather than "field was zero".
+ *
+ * We accept both numeric and numeric-string values because JSON-over-
+ * HTTP shapes sometimes encode big numbers as strings.
+ */
+function pickNumber(
+    record: Record<string, unknown> | undefined,
+    keys: readonly string[],
+): number | null {
+    if (!record) {
+        return null;
+    }
+    for (const key of keys) {
+        const v = record[key];
+        if (typeof v === "number" && Number.isFinite(v)) {
+            return v;
+        }
+        if (typeof v === "string") {
+            const n = Number(v);
+            if (Number.isFinite(n)) {
+                return n;
+            }
+        }
+    }
+    return null;
 }
 
 // ---- Internal: step → TurnUsageLine --------------------------------------

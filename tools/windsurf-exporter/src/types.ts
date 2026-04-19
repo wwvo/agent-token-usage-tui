@@ -77,6 +77,23 @@ export interface CascadeStepMetadata {
     executionId?: string;
     /** Grouped dimension list; we only read the `Token Usage` group. */
     responseDimensionGroups?: ReadonlyArray<ResponseDimensionGroup>;
+    /**
+     * Windsurf's own running cost estimate on `CORTEX_STEP_TYPE_CHECKPOINT`
+     * steps. Shape is left intentionally loose (`Record<string, unknown>`)
+     * because the field isn't documented and the v0.2.9 retention probe
+     * only confirmed its *existence*, not the exact field names inside.
+     * The exporter's extractor in `writer.ts` probes for several
+     * plausible layouts at runtime and bails gracefully if nothing
+     * matches — so a wrong guess degrades to "no cross-check data"
+     * rather than crashing the refresh.
+     */
+    modelCost?: Record<string, unknown>;
+    /**
+     * Windsurf's per-checkpoint token accounting (input / output / cache
+     * breakdown) on `CORTEX_STEP_TYPE_CHECKPOINT` steps. Same loose
+     * typing + defensive extraction as `modelCost`.
+     */
+    modelUsage?: Record<string, unknown>;
 }
 
 export interface ResponseDimensionGroup {

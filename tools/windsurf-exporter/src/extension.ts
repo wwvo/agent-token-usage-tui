@@ -114,6 +114,7 @@ async function runOnce(): Promise<void> {
         let totalInserted = 0;
         let totalSkipped = 0;
         let totalIgnored = 0;
+        let totalCheckpoints = 0;
         let failedCascades = 0;
 
         for (const id of ids) {
@@ -137,18 +138,20 @@ async function runOnce(): Promise<void> {
             totalInserted += stats.turnsInserted;
             totalSkipped += stats.turnsSkipped;
             totalIgnored += stats.turnsIgnored;
+            totalCheckpoints += stats.checkpointsInserted;
         }
 
         setStatus(
             `$(pulse) atut: ${ids.length} cascades (+${totalInserted})`,
             [
                 `Last refresh: ${new Date().toISOString()}`,
-                `  cascades:  ${ids.length}`,
-                `  inserted:  ${totalInserted}`,
-                `  skipped:   ${totalSkipped} (already on disk)`,
-                `  ignored:   ${totalIgnored} (non-usage steps)`,
-                `  fetch err: ${failedCascades}`,
-                `  output:    ${dir}`,
+                `  cascades:    ${ids.length}`,
+                `  inserted:    ${totalInserted}`,
+                `  skipped:     ${totalSkipped} (already on disk)`,
+                `  ignored:     ${totalIgnored} (non-usage steps)`,
+                `  checkpoints: ${totalCheckpoints} (server cost cross-check)`,
+                `  fetch err:   ${failedCascades}`,
+                `  output:      ${dir}`,
             ].join("\n"),
         );
     } catch (err) {
