@@ -168,10 +168,16 @@ $:
             ls -la "${STAGE}.tar.gz"*
         - name: extract-release-notes
           # Carve out the CHANGELOG stanza for this exact version so the
-          # Release description mirrors what users would read in source.
-          # awk: start printing after `## [X.Y.Z]`, stop at the next
-          # `## [` heading. If no match (e.g. an unreleased tag), fall
-          # back to a one-liner so `git:release` still has *some* body.
+          # Release description mirrors what users read in source. awk:
+          # start printing after `## [X.Y.Z]`, stop at the next `## [`.
+          # If no match (e.g. an unreleased tag), fall back to a one-
+          # liner so `git:release` still has *some* body.
+          #
+          # Contributors: cnb runners don't have `gh` or GitHub API
+          # access, and cnb.cool itself doesn't auto-render `@mentions`
+          # into avatars the way github.com does. We fall back to the
+          # raw author display name (`%an`) from `git log`, listing
+          # every unique contributor in the tag-to-tag range.
           script: |
             set -eu
             TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
@@ -181,7 +187,28 @@ $:
             if [ ! -s release-notes.md ]; then
               echo "See [CHANGELOG.md](./CHANGELOG.md) for release notes." > release-notes.md
             fi
-            head -n 20 release-notes.md
+
+            prev_tag="$(git tag -l --sort=-version:refname \
+              | awk -v tag="${TAG}" '$0 != tag { print; exit }' || true)"
+            if [ -n "${prev_tag}" ]; then
+              range="${prev_tag}..${TAG}"
+            else
+              range="${TAG}"
+            fi
+
+            authors="$(git log --format='%an' "${range}" 2>/dev/null \
+              | awk 'NF' | sort -u || true)"
+            if [ -n "${authors}" ]; then
+              {
+                echo ""
+                echo "### Contributors"
+                echo ""
+                echo "${authors}" | sed 's/^/- /'
+              } >> release-notes.md
+            fi
+
+            echo "--- release-notes.md preview ---"
+            head -n 40 release-notes.md
         - name: create-release
           type: git:release
           options:

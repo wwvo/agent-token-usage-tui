@@ -184,15 +184,66 @@ jobs:
         shell: bash
         run: ls -la dist/
 
-      # `softprops/action-gh-release` creates the release if missing and
-      # attaches every file we downloaded. We let it auto-extract a name
-      # from the tag; a manually-curated changelog body lives in
-      # `CHANGELOG.md`, which the user can copy-paste onto the release
-      # page post-hoc if they want narrative notes.
+      # Install git-cliff to render the release body from the commit log.
+      # A prebuilt binary keeps this under 5 s; compiling from source
+      # would roughly double the release job's wall time.
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      # Compose the release body in two passes:
+      #   1. `git cliff --latest` renders the current tag's version
+      #      block per cliff.toml (short bullets, grouped by type).
+      #   2. Append a `### Contributors` section with `@login` mentions
+      #      from the tag-to-tag compare range. GitHub auto-renders any
+      #      `@username` in a Release body into the avatar contributor
+      #      list at the page bottom — the same hook codex
+      #      (openai/codex) relies on for its Release pages.
+      - name: Generate release notes
+        id: release_notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/release-notes.md"
+
+          git cliff --latest -o "${notes}"
+
+          # Previous tag in version-sort order. `awk` skips over the
+          # current tag so the calculation works even if multiple
+          # release workflows happened to interleave locally.
+          prev_tag="$(git tag -l --sort=-version:refname \
+            | awk -v tag="${TAG}" '$0 != tag { print; exit }')"
+          range="${prev_tag:+${prev_tag}...}${TAG}"
+
+          logins="$(gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/compare/${range}" \
+            --jq '.commits[].author.login // empty' 2>/dev/null \
+            | awk 'NF' | sort -u || true)"
+
+          if [ -n "${logins}" ]; then
+            {
+              echo ""
+              echo "### Contributors"
+              echo ""
+              echo "${logins}" | sed 's/^/- @/'
+            } >> "${notes}"
+          fi
+
+          echo "::group::Release body preview"
+          cat "${notes}"
+          echo "::endgroup::"
+
+          echo "path=${notes}" >> "${GITHUB_OUTPUT}"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.path }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
