@@ -233,17 +233,26 @@ jobs:
             | awk -v tag="${TAG}" '$0 != tag { print; exit }')"
           range="${prev_tag:+${prev_tag}...}${TAG}"
 
-          logins="$(gh api --paginate \
+          # Per-commit contributor rendering:
+          #   * If the commit author's email is linked to a GitHub user,
+          #     render `- @login` so the Release page auto-resolves it
+          #     into an avatar chip (same mechanism codex relies on).
+          #   * Otherwise fall back to `- commit.author.name` — works
+          #     for cnb.cool-mirrored pushes whose `@noreply.cnb.cool`
+          #     emails don't map to any GitHub user (`author.login` is
+          #     null), preserving at least the human-readable handle
+          #     instead of silently dropping the whole section.
+          contributors="$(gh api --paginate \
             "/repos/${GITHUB_REPOSITORY}/compare/${range}" \
-            --jq '.commits[].author.login // empty' 2>/dev/null \
-            | awk 'NF' | sort -u || true)"
+            --jq '.commits[] | if .author.login then "- @" + .author.login else "- " + .commit.author.name end' \
+            2>/dev/null | awk 'NF' | sort -u || true)"
 
-          if [ -n "${logins}" ]; then
+          if [ -n "${contributors}" ]; then
             {
               echo ""
               echo "### Contributors"
               echo ""
-              echo "${logins}" | sed 's/^/- @/'
+              echo "${contributors}"
             } >> "${notes}"
           fi
 
