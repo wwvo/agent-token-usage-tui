@@ -241,6 +241,21 @@ jobs:
             "${notes}" > "${notes}.stripped"
           mv "${notes}.stripped" "${notes}"
 
+          # Rewrite commit links from cnb.cool → github.com so the
+          # GitHub Release body cross-references github commits (stay
+          # on-platform when the reader clicks a hash). cliff.toml's
+          # `postprocessors` hardcodes `<REPO>` → cnb.cool because
+          # CHANGELOG.md's primary audience reads from cnb.cool; here
+          # we override per-platform at CI time instead of maintaining
+          # two cliff configs. Path shape differs too: cnb is GitLab-
+          # style `/-/commit/<sha>`, github is `/commit/<sha>`. Both
+          # are swapped in one substitution. `GITHUB_REPOSITORY` is
+          # the Actions runner's auto-injected `owner/repo`, so
+          # fork / rename tracks without manual edits.
+          sed -i -E \
+            "s|https://cnb\\.cool/prevailna/agent-token-usage-tui/-/commit/|https://github.com/${GITHUB_REPOSITORY}/commit/|g" \
+            "${notes}"
+
           # Previous tag in version-sort order. `awk` skips over the
           # current tag so the calculation works even if multiple
           # release workflows happened to interleave locally.
