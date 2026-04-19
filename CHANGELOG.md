@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Windsurf VSCode exporter** under `tools/windsurf-exporter/`:
+  a thin companion extension that captures Cascade trajectories from the
+  in-process Language Server (CSRF + `devClient()` interception) and
+  writes append-only JSONL to `~/.atut/windsurf-sessions/`. Status bar
+  shows per-tick counters; manual refresh via
+  `ATUT: Export Windsurf Cascade trajectories now`.
+- **Windsurf collector**: the Rust side now ingests the exporter's JSONL
+  files into SQLite like any other agent. Source-scoped offset resume,
+  malformed-line skip, missing-timestamp drop, per-turn model fallback
+  to the session's `last_model` — all covered by 7 new fixture tests.
+- **Sessions scrollbar + PageUp/PageDown** navigation; Sessions view cap
+  raised from 200 to 2,000 rows (still safely under 1 ms per query).
+- **Models → Sessions drill-down**: press `Enter` on Models to filter
+  Sessions to every session that ever used the highlighted model, with
+  totals scoped to that model.
+- **`NO_COLOR` support**: honors the [no-color.org](https://no-color.org/)
+  convention; `Modifier::BOLD` / reverse stay intact so selection is
+  still visible on monochrome terminals.
+- **Panic hook**: disables raw mode and leaves the alt screen before
+  the default panic hook prints a backtrace — crashes inside the TUI
+  no longer leave the user's shell broken.
+- **`justfile`** with common recipes (`fmt`, `clippy`, `test`, `run`,
+  `release`, `ci`). README now has a **Development** section pointing
+  at it.
+- **CLI `--help`**: top-level `long_about` plus per-subcommand
+  `long_about` with copy-pasteable example blocks.
+- **cnb.cool CI** (`.cnb.yml`): push/PR pipelines run
+  `fmt-check + clippy + test` on amd64 + arm64; tag pushes produce
+  stripped Linux tarballs (`atut-<tag>-<arch>-linux.tar.gz`) plus
+  SHA-256 checksums.
+- **Apache-2.0 `LICENSE`** file at the repo root (the Cargo manifest
+  already declared this license; the file itself was missing).
+
+### Changed
+
+- `on_key` now takes a `page_size: usize` parameter so PageUp/PageDown
+  can respect the actual terminal height. No behavior change for other
+  keys.
+- `run_tui` wires the stderr-based `StartupReporter` (progress checklist
+  replaces the previous blank pre-TUI screen). Other CLI subcommands
+  still use `NoopReporter`.
+
+### Fixed
+
+- README `Phase 2` / `CHANGELOG` paragraph had residual text corruption
+  from an earlier edit (`todahangelog`, a truncated `## Cy)` heading).
+  Cleaned up and `CHANGELOG` link moved to its own `## Changelog` section.
+
 ## [0.1.0] — 2026-04-19
 
 First public release. Everything below is new.
@@ -69,13 +119,15 @@ First public release. Everything below is new.
 
 ### Known limitations
 
-- **Windsurf** sessions are not yet captured; the Phase 2 VSCode exporter
-  is the design landing point (see
-  `plans/agent-token-usage-tui-architecture-77d40b.md` §13).
+- **Windsurf** sessions required a companion VSCode extension to capture;
+  the initial `v0.1.0` release shipped a stub collector. See the
+  `[Unreleased]` Windsurf entries above for the follow-up that closes
+  this gap.
 - No scrolling / pagination yet on the Sessions view — it shows the 200
-  most recent only.
+  most recent only. (Addressed in `[Unreleased]`: scrollbar + 2,000-row
+  cap + PageUp/PageDown.)
 - No per-model drill-down from the Models view; only Overview → Sessions
-  filtering is wired up.
+  filtering is wired up. (Addressed in `[Unreleased]`.)
 
 [Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...HEAD
 [0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0

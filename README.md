@@ -29,13 +29,13 @@ everything works offline.
 
 ## Supported agents
 
-| Agent              | Data source                       | Notes                                                     |
-| ------------------ | --------------------------------- | --------------------------------------------------------- |
-| Claude Code        | `~/.claude/projects/**/*.jsonl`   | auto-detected                                             |
-| Codex CLI          | `~/.codex/sessions/**/*.jsonl`    | auto-detected; `input_tokens` corrected for cache overlap |
-| OpenClaw           | `<base>/<agent>/sessions/*.jsonl` | configure `openclaw_bases` in `config.toml`               |
-| OpenCode           | local SQLite                      | configure `opencode_dbs` in `config.toml`                 |
-| Windsurf / Cascade | _not persisted to disk_           | placeholder; real exporter ships in Phase 2 (see below)   |
+| Agent              | Data source                         | Notes                                                     |
+| ------------------ | ----------------------------------- | --------------------------------------------------------- |
+| Claude Code        | `~/.claude/projects/**/*.jsonl`     | auto-detected                                             |
+| Codex CLI          | `~/.codex/sessions/**/*.jsonl`      | auto-detected; `input_tokens` corrected for cache overlap |
+| OpenClaw           | `<base>/<agent>/sessions/*.jsonl`   | configure `openclaw_bases` in `config.toml`               |
+| OpenCode           | local SQLite                        | configure `opencode_dbs` in `config.toml`                 |
+| Windsurf / Cascade | `~/.atut/windsurf-sessions/*.jsonl` | written by the companion VSCode exporter (see below)      |
 
 ## Install / build
 
@@ -71,16 +71,23 @@ Common flags (all commands):
 
 ### TUI key bindings
 
-| Key               | Action                                                                 |
-| ----------------- | ---------------------------------------------------------------------- |
-| `q` / `Esc` / `4` | Quit / Trend                                                           |
-| `1` / `2` / `3`   | Switch to Overview / Sessions / Models                                 |
-| `j` / `↓`         | Move selection down                                                    |
-| `k` / `↑`         | Move selection up                                                      |
-| `g` / `Home`      | Jump to top                                                            |
-| `G` / `End`       | Jump to bottom                                                         |
-| `Enter`           | Drill into Sessions filtered by the highlighted source (Overview only) |
-| `r`               | Refresh data from the DB                                               |
+| Key                   | Action                                                               |
+| --------------------- | -------------------------------------------------------------------- |
+| `q` / `Esc`           | Quit                                                                 |
+| `1` / `2` / `3` / `4` | Switch to Overview / Sessions / Models / Trend                       |
+| `j` / `↓`             | Move selection down                                                  |
+| `k` / `↑`             | Move selection up                                                    |
+| `PageDown` / `PageUp` | Jump by one viewport                                                 |
+| `g` / `Home`          | Jump to top                                                          |
+| `G` / `End`           | Jump to bottom                                                       |
+| `Enter`               | Drill from Overview into Sessions by source, or from Models by model |
+| `r`                   | Refresh data from the DB                                             |
+
+The Sessions view supports scrolling through up to 2,000 rows with a
+right-edge scrollbar reflecting the current position. Colors honor the
+[`NO_COLOR`](https://no-color.org/) convention — set the env var to
+anything non-empty to get a monochrome rendering that still uses bold
+and reverse for emphasis.
 
 ## Configuration
 
@@ -92,7 +99,7 @@ auto-detected appear in the schema:
 # config.toml — every field optional.
 openclaw_bases = ["/home/u/.local/share/openclaw"]
 opencode_dbs   = ["/home/u/.local/share/opencode/opencode.db"]
-windsurf_bases = []  # reserved for the Phase 2 VSCode exporter
+windsurf_bases = []  # optional; defaults to ~/.atut/windsurf-sessions/
 ```
 
 Unknown keys are rejected loudly (typos in key names won't be silently
@@ -113,17 +120,38 @@ pricing.json                # last successful litellm sync
 
 No writes to `%APPDATA%` / `~/.config` / `~/.local/share`.
 
-## Phase 2: Windsurf support
+## Windsurf support
 
 Windsurf doesn't persist Cascade trajectories to disk — they live in the
 Language Server's memory and are only reachable through a CSRF-gated local
-gRPC endpoint. That's incompatible with a pure Rust CLI.
+gRPC endpoint. That's incompatible with a pure Rust CLI, so we ship a
+**thin companion VSCode extension** under
+[`tools/windsurf-exporter/`](./tools/windsurf-exporter/).
 
-The Phase 2 plan is a **thin companion VSCode extension** that polls
-`GetAllCascadeTrajectories` every ~60s and writes JSONL files to
-`<exe-dir>/windsurf-sessions/*.jsonl`. `collector::windsurf` (placeholder
-today) will then read those files like any other agent. See
-`plans/agent-token-usage-tui-architecture-77d40b.md` §13 for the design.
+The exporter polls `GetAllCascadeTrajectories` every ~60s and appends
+new turns to `~/.atut/windsurf-sessions/<cascadeId>.jsonl`. The Rust
+collector then treats those files exactly like Codex or Claude sessions.
+
+### Install the exporter
+
+```bash
+cd tools/windsurf-exporter
+npm install
+npm run package        # produces agent-token-usage-tui-windsurf-exporter-*.vsix
+```
+
+In Windsurf: **Extensions → ⋯ → Install from VSIX**, pick the `.vsix`.
+
+Verify the status bar shows `$(pulse) atut: N cascades (+M)` after ~8s.
+Hover the entry for per-tick counters (inserted / skipped / ignored /
+fetch errors / output directory).
+
+To isolate the data for testing, point both the extension and the Rust
+side at the same sandbox:
+
+```bash
+export ATUT_WINDSURF_SESSIONS_DIR=/tmp/atut-sandbox/windsurf-sessions
+```
 
 ## Changelog
 
