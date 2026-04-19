@@ -1,0 +1,8 @@
+{"type":"session","id":"oc-sess-1","cwd":"/home/u/project","timestamp":"2026-04-19T10:00:00Z"}
+{"type":"message","timestamp":"2026-04-19T10:00:02Z","message":{"role":"user","content":"analyze this file"}}
+{"type":"message","timestamp":"2026-04-19T10:00:05Z","message":{"role":"assistant","model":"claude-sonnet-4-5","usage":{"input":100,"output":50,"cacheRead":20,"cacheWrite":30}}}
+{"type":"message","timestamp":"2026-04-19T10:00:10Z","message":{"role":"user","content":[{"type":"tool_result","content":"done"}]}}
+{"type":"message","timestamp":"2026-04-19T10:00:12Z","message":{"role":"user","content":"also check errors"}}
+{"type":"message","timestamp":"2026-04-19T10:00:15Z","message":{"role":"assistant","model":"claude-sonnet-4-5","usage":{"input":80,"output":40,"cacheRead":10,"cacheWrite":15}}}
+{"type":"message","timestamp":"2026-04-19T10:00:20Z","message":{"role":"assistant","model":"delivery-mirror","usage":{"input":9999,"output":9999}}}
+{"type":"message","timestamp":"2026-04-19T10:00:22Z","message":{"role":"assistant","model":"claude-sonnet-4-5"}}
