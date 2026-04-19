@@ -145,12 +145,12 @@ $:
             TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
             STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
             mkdir -p "${STAGE}"
-            cp target/dist/atut "${STAGE}/"
+            cp target/dist/agent-token-usage-tui "${STAGE}/"
             # `strip` is idempotent after dist profile's `strip = true`, but
             # the Rust linker on slim images sometimes leaves symbols in
             # the dwarf section. A belt-and-braces pass keeps binary size
             # predictable (~4-6 MB).
-            strip "${STAGE}/atut" || true
+            strip "${STAGE}/agent-token-usage-tui" || true
             cp README.md CHANGELOG.md LICENSE "${STAGE}/"
             tar czf "${STAGE}.tar.gz" "${STAGE}"
             sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
@@ -179,8 +179,8 @@ $:
             TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
             STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
             mkdir -p "${STAGE}"
-            cp target/dist/atut "${STAGE}/"
-            strip "${STAGE}/atut" || true
+            cp target/dist/agent-token-usage-tui "${STAGE}/"
+            strip "${STAGE}/agent-token-usage-tui" || true
             cp README.md CHANGELOG.md LICENSE "${STAGE}/"
             tar czf "${STAGE}.tar.gz" "${STAGE}"
             sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"

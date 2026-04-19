@@ -46,19 +46,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-            bin: atut
+            bin: agent-token-usage-tui
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-            bin: atut.exe
+            bin: agent-token-usage-tui.exe
           - target: x86_64-apple-darwin
             os: macos-13
             archive: tar.gz
-            bin: atut
+            bin: agent-token-usage-tui
           - target: aarch64-apple-darwin
             os: macos-14
             archive: tar.gz
-            bin: atut
+            bin: agent-token-usage-tui
 
     steps:
       - uses: actions/checkout@v4
