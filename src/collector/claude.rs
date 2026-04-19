@@ -382,15 +382,13 @@ fn parse_envelope(
     };
 
     match kind {
-        "user" => {
-            if util::is_real_user_prompt(message) {
-                let Some(ts) = ts else { return };
-                prompts.push(PromptEvent {
-                    source: Source::Claude,
-                    session_id: String::new(), // filled later from meta/fallback
-                    timestamp: ts,
-                });
-            }
+        "user" if util::is_real_user_prompt(message) => {
+            let Some(ts) = ts else { return };
+            prompts.push(PromptEvent {
+                source: Source::Claude,
+                session_id: String::new(), // filled later from meta/fallback
+                timestamp: ts,
+            });
         }
         "assistant" => {
             let Some(model) = message.get("model").and_then(Value::as_str) else {

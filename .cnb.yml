@@ -140,8 +140,11 @@ $:
         - name: package
           # One large script so intermediate variables (TAG, STAGE) don't
           # need to survive across stages — simpler than exporting envs.
+          # `set -eu` only; `-o pipefail` is a bash-ism and the cnb runner
+          # uses dash by default (`sh: 1: set: Illegal option -o pipefail`).
+          # None of the commands below are piped, so `-eu` is sufficient.
           script: |
-            set -euo pipefail
+            set -eu
             TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
             STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
             mkdir -p "${STAGE}"
@@ -174,8 +177,9 @@ $:
         - name: build-dist
           script: cargo build --profile dist --locked
         - name: package
+          # Same `set -eu` rationale as the amd64 leg above.
           script: |
-            set -euo pipefail
+            set -eu
             TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
             STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
             mkdir -p "${STAGE}"

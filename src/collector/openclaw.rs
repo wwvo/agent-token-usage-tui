@@ -379,15 +379,13 @@ fn parse_entry(
             let role = message.get("role").and_then(Value::as_str).unwrap_or("");
 
             match role {
-                "user" => {
-                    if util::is_real_user_prompt(message) {
-                        if let Some(ts) = ts {
-                            prompts.push(PromptEvent {
-                                source: Source::OpenClaw,
-                                session_id: String::new(),
-                                timestamp: ts,
-                            });
-                        }
+                "user" if util::is_real_user_prompt(message) => {
+                    if let Some(ts) = ts {
+                        prompts.push(PromptEvent {
+                            source: Source::OpenClaw,
+                            session_id: String::new(),
+                            timestamp: ts,
+                        });
                     }
                 }
                 "assistant" => {
