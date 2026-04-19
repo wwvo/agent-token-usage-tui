@@ -97,14 +97,54 @@ pub fn run() -> Result<()> {
     logging::init(LogMode::Stderr)?;
 
     match cli.command {
-        None => {
-            // M5 C6 replaces this with `tui::run(...).await` under a tokio runtime.
-            todo!("TUI entry point lands in M5 C6; use `version` / `scan` subcommands for now")
-        }
+        None => run_tui(&cli),
         Some(Commands::Scan) => run_scan(cli.data_dir.as_deref()),
         Some(Commands::SyncPrices) => run_sync_prices(cli.data_dir.as_deref()),
         Some(Commands::Version) => print_version(),
     }
+}
+
+/// Default `atut` entry point: prime the DB, then launch the TUI.
+///
+/// Primes in a fixed order because each step feeds the next:
+/// 1. Sync pricing catalog (unless `--no-prices`).
+/// 2. Run the scan pipeline over every collector (unless `--no-scan`).
+///    Claude / Codex use their `$HOME`-derived defaults; OpenClaw / OpenCode
+///    / Windsurf get empty configs (M6 C2 wires these to `config.toml`).
+/// 3. Hand the fully-primed `Db` to the TUI event loop.
+///
+/// Both priming steps are best-effort: a network failure or malformed
+/// session file surfaces as a tracing warning rather than aborting the TUI.
+fn run_tui(cli: &Cli) -> Result<()> {
+    let db_path = resolve_db_path(cli.data_dir.as_deref())?;
+    let db =
+        Db::open(&db_path).with_context(|| format!("open database at {}", db_path.display()))?;
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for TUI")?;
+
+    rt.block_on(async {
+        if !cli.no_prices {
+            match sync_or_fallback(&db, PRICING_FRESHNESS).await {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "pricing sync failed; continuing with stale/missing prices");
+                }
+            }
+        }
+        if !cli.no_scan {
+            let config = PipelineConfig::default();
+            match pipeline_run_scan(&db, &NoopReporter, &config).await {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "scan pipeline failed; continuing with existing DB");
+                }
+            }
+        }
+        crate::tui::run(db).await
+    })
 }
 
 /// Resolve the database path honoring the `--data-dir` override.
