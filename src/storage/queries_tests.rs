@@ -226,3 +226,151 @@ fn fetch_model_tallies_filters_by_source() {
     assert_eq!(claude_only.len(), 2);
     assert!(claude_only.iter().all(|m| m.source == Source::Claude));
 }
+
+// ---- daily_totals / Trend view queries ------------------------------------
+
+fn seed_trend_db(today: chrono::NaiveDate) -> (tempfile::TempDir, Db) {
+    // Seed one usage row on each of: today-5, today-2, today.
+    // We leave today-6..today-3 (except -5) and today-1 intentionally empty
+    // to verify zero-filling behavior.
+    let tmp = tempdir().expect("tempdir");
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+
+    let mk_ts = |offset_days: i64, hour: u32| -> DateTime<Utc> {
+        let d = today
+            .checked_sub_signed(chrono::Duration::days(offset_days))
+            .unwrap();
+        d.and_hms_opt(hour, 0, 0).unwrap().and_utc()
+    };
+
+    db.upsert_session(&SessionRecord {
+        source: Source::Claude,
+        session_id: "t-s1".into(),
+        project: "p".into(),
+        cwd: "/p".into(),
+        version: String::new(),
+        git_branch: String::new(),
+        start_time: mk_ts(5, 10),
+        prompts: 0,
+    })
+    .unwrap();
+
+    let records = vec![
+        UsageRecord {
+            source: Source::Claude,
+            session_id: "t-s1".into(),
+            model: "m".into(),
+            input_tokens: 100,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            reasoning_output_tokens: 0,
+            cost_usd: 1.0,
+            timestamp: mk_ts(5, 10),
+            project: "p".into(),
+            git_branch: String::new(),
+        },
+        UsageRecord {
+            source: Source::Claude,
+            session_id: "t-s1".into(),
+            model: "m".into(),
+            input_tokens: 200,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            reasoning_output_tokens: 0,
+            cost_usd: 2.0,
+            timestamp: mk_ts(2, 10),
+            project: "p".into(),
+            git_branch: String::new(),
+        },
+        UsageRecord {
+            source: Source::Claude,
+            session_id: "t-s1".into(),
+            model: "m".into(),
+            input_tokens: 50,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            reasoning_output_tokens: 0,
+            cost_usd: 0.5,
+            timestamp: mk_ts(0, 10),
+            project: "p".into(),
+            git_branch: String::new(),
+        },
+    ];
+    db.insert_usage_batch(&records).unwrap();
+
+    (tmp, db)
+}
+
+#[test]
+fn fetch_daily_totals_returns_exactly_days_rows_ascending() {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 19).unwrap();
+    let (_tmp, db) = seed_trend_db(today);
+
+    let rows = db.fetch_daily_totals_as_of(7, today).expect("daily");
+    assert_eq!(rows.len(), 7, "one row per day in the window");
+
+    // Ascending order: first row = today-6, last row = today.
+    assert_eq!(
+        rows[0].date,
+        today.checked_sub_signed(chrono::Duration::days(6)).unwrap()
+    );
+    assert_eq!(rows[6].date, today);
+}
+
+#[test]
+fn fetch_daily_totals_zero_fills_inactive_days() {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 19).unwrap();
+    let (_tmp, db) = seed_trend_db(today);
+
+    let rows = db.fetch_daily_totals_as_of(7, today).expect("daily");
+
+    // today-6: no activity, zero-filled.
+    assert_eq!(rows[0].records, 0);
+    assert_eq!(rows[0].total_tokens, 0);
+    assert!((rows[0].total_cost_usd - 0.0).abs() < 1e-9);
+
+    // today-5: one row (100 tokens, $1.0).
+    assert_eq!(rows[1].records, 1);
+    assert_eq!(rows[1].total_tokens, 100);
+    assert!((rows[1].total_cost_usd - 1.0).abs() < 1e-9);
+
+    // today-2: one row (200 tokens, $2.0).
+    assert_eq!(rows[4].records, 1);
+    assert_eq!(rows[4].total_tokens, 200);
+    assert!((rows[4].total_cost_usd - 2.0).abs() < 1e-9);
+
+    // today-1: empty slot between activity days.
+    assert_eq!(rows[5].records, 0);
+
+    // today: one row (50 tokens, $0.5).
+    assert_eq!(rows[6].records, 1);
+    assert_eq!(rows[6].total_tokens, 50);
+    assert!((rows[6].total_cost_usd - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn fetch_daily_totals_ignores_rows_older_than_window() {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 19).unwrap();
+    let (_tmp, db) = seed_trend_db(today);
+
+    // 3-day window: should only see today-2, today-1, today.
+    let rows = db.fetch_daily_totals_as_of(3, today).expect("daily");
+    assert_eq!(rows.len(), 3);
+    // today-5 row (the first seeded usage) must be filtered out.
+    let total_records: i64 = rows.iter().map(|r| r.records).sum();
+    assert_eq!(total_records, 2, "only today-2 and today are in-window");
+}
+
+#[test]
+fn fetch_daily_totals_days_zero_clamps_to_one() {
+    // Defensive: days=0 would produce an empty scaffold; we clamp to 1
+    // so callers always see at least today.
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 19).unwrap();
+    let (_tmp, db) = seed_trend_db(today);
+    let rows = db.fetch_daily_totals_as_of(0, today).expect("daily");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].date, today);
+}

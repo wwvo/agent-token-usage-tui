@@ -67,6 +67,8 @@ fn number_keys_switch_views() {
     assert_eq!(app.view, View::Sessions);
     app.on_key(press(KeyCode::Char('3')));
     assert_eq!(app.view, View::Models);
+    app.on_key(press(KeyCode::Char('4')));
+    assert_eq!(app.view, View::Trend);
     app.on_key(press(KeyCode::Char('1')));
     assert_eq!(app.view, View::Overview);
 }
@@ -88,6 +90,12 @@ fn refresh_populates_five_overview_rows_even_on_empty_db() {
     // Empty DB → no sessions / model rows.
     assert!(app.sessions_rows.is_empty());
     assert!(app.model_rows.is_empty());
+    // Trend is always the configured window length (zero-filled), never empty.
+    assert_eq!(app.trend_rows.len(), super::TREND_WINDOW_DAYS);
+    assert!(
+        app.trend_rows.iter().all(|r| r.records == 0),
+        "empty DB → every day zero",
+    );
 }
 
 #[test]
@@ -150,13 +158,28 @@ fn view_title_is_readable() {
     assert_eq!(View::Overview.title(), "Overview");
     assert_eq!(View::Sessions.title(), "Sessions");
     assert_eq!(View::Models.title(), "Models");
+    assert_eq!(View::Trend.title(), "Trend");
 }
 
 #[test]
-fn view_all_returns_three_variants() {
+fn view_all_returns_four_variants() {
     let all = View::all();
-    assert_eq!(all.len(), 3);
+    assert_eq!(all.len(), 4);
     assert_eq!(all[0], View::Overview);
     assert_eq!(all[1], View::Sessions);
     assert_eq!(all[2], View::Models);
+    assert_eq!(all[3], View::Trend);
+}
+
+#[test]
+fn jk_on_trend_is_noop_and_does_not_panic() {
+    // Trend has no selection semantics; j / k must be harmless no-ops.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('4')));
+    assert_eq!(app.view, View::Trend);
+    app.on_key(press(KeyCode::Char('j')));
+    app.on_key(press(KeyCode::Char('k')));
+    // Still Trend, still no panic.
+    assert_eq!(app.view, View::Trend);
 }

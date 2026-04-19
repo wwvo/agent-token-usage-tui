@@ -10,8 +10,9 @@ everything works offline.
 
 ## Features
 
-- k9s-style keyboard-driven UI with three views: **Overview** (by source) /
-  **Sessions** (recent activity) / **Models** (cost per model).
+- k9s-style keyboard-driven UI with four views: **Overview** (by source) /
+  **Sessions** (recent activity) / **Models** (cost per model) /
+  **Trend** (7-day cost + tokens sparkline).
 - Incremental scans (file-state checkpoint in SQLite) — rescans don't
   re-process millions of lines.
 - Token normalization: Codex's overlapping input/cache semantics is
@@ -68,16 +69,16 @@ Common flags (all commands):
 
 ### TUI key bindings
 
-| Key             | Action                                                                 |
-| --------------- | ---------------------------------------------------------------------- |
-| `q` / `Esc`     | Quit                                                                   |
-| `1` / `2` / `3` | Switch to Overview / Sessions / Models                                 |
-| `j` / `↓`       | Move selection down                                                    |
-| `k` / `↑`       | Move selection up                                                      |
-| `g` / `Home`    | Jump to top                                                            |
-| `G` / `End`     | Jump to bottom                                                         |
-| `Enter`         | Drill into Sessions filtered by the highlighted source (Overview only) |
-| `r`             | Refresh data from the DB                                               |
+| Key               | Action                                                                 |
+| ----------------- | ---------------------------------------------------------------------- |
+| `q` / `Esc` / `4` | Quit / Trend                                                           |
+| `1` / `2` / `3`   | Switch to Overview / Sessions / Models                                 |
+| `j` / `↓`         | Move selection down                                                    |
+| `k` / `↑`         | Move selection up                                                      |
+| `g` / `Home`      | Jump to top                                                            |
+| `G` / `End`       | Jump to bottom                                                         |
+| `Enter`           | Drill into Sessions filtered by the highlighted source (Overview only) |
+| `r`               | Refresh data from the DB                                               |
 
 ## Configuration
 

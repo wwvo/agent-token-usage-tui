@@ -13,6 +13,8 @@ use std::str::FromStr;
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
+use chrono::Duration;
+use chrono::NaiveDate;
 use chrono::Utc;
 use rusqlite::params;
 
@@ -67,6 +69,18 @@ pub struct SessionSummary {
 pub struct ModelTally {
     pub source: Source,
     pub model: String,
+    pub records: i64,
+    pub total_tokens: i64,
+    pub total_cost_usd: f64,
+}
+
+/// One UTC-day bucket in the Trend view's rolling window.
+///
+/// Days with no activity still appear with zero counters so the sparkline
+/// renders a continuous axis (no phantom "skipped" dates).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DailyTotal {
+    pub date: NaiveDate,
     pub records: i64,
     pub total_tokens: i64,
     pub total_cost_usd: f64,
@@ -248,6 +262,95 @@ impl Db {
                 .query_row(params![s.source.as_str(), &s.session_id], |r| r.get(0))
                 .context("query session prompts")?;
             s.prompts = p;
+        }
+
+        Ok(out)
+    }
+
+    /// Return one [`DailyTotal`] per UTC day in the rolling window
+    /// `[today - days + 1 .. today]` (inclusive, ascending).
+    ///
+    /// Days without activity are zero-filled so the sparkline has a
+    /// continuous axis. Uses the system clock for "today", which is fine for
+    /// a display-only trend (a one-minute skew doesn't change buckets).
+    ///
+    /// # Errors
+    ///
+    /// Surfaces any rusqlite / date-parse error annotated with query context.
+    pub fn fetch_daily_totals(&self, days: usize) -> Result<Vec<DailyTotal>> {
+        self.fetch_daily_totals_as_of(days, Utc::now().date_naive())
+    }
+
+    /// Test-friendly variant that takes an explicit "today" anchor.
+    ///
+    /// Real callers use [`Self::fetch_daily_totals`]; this form exists so
+    /// deterministic tests can seed data relative to a fixed date.
+    pub fn fetch_daily_totals_as_of(
+        &self,
+        days: usize,
+        today: NaiveDate,
+    ) -> Result<Vec<DailyTotal>> {
+        let days_i = i64::try_from(days.max(1)).unwrap_or(1);
+        let start = today
+            .checked_sub_signed(Duration::days(days_i - 1))
+            .unwrap_or(today);
+
+        // Zero-filled scaffold so we always return exactly `days` rows.
+        let mut out: Vec<DailyTotal> = (0..days_i)
+            .map(|i| {
+                let d = start.checked_add_signed(Duration::days(i)).unwrap_or(start);
+                DailyTotal {
+                    date: d,
+                    records: 0,
+                    total_tokens: 0,
+                    total_cost_usd: 0.0,
+                }
+            })
+            .collect();
+
+        let conn = self.lock();
+        // Bind the cutoff as a real `DateTime<Utc>` so rusqlite serializes it
+        // with the *same* format it used when writing rows (including the
+        // "+00:00" offset). Using a format!-built string here risks a
+        // lexicographic mismatch because `+` (0x2B) sorts before `Z` (0x5A),
+        // which would silently drop in-window rows.
+        let cutoff: DateTime<Utc> = start.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DATE(timestamp) AS d, \
+                        COUNT(*), \
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_input_tokens \
+                                     + cache_creation_input_tokens),0), \
+                        COALESCE(SUM(cost_usd),0.0) \
+                 FROM usage_records \
+                 WHERE timestamp >= ?1 \
+                 GROUP BY d \
+                 ORDER BY d ASC",
+            )
+            .context("prepare daily_totals")?;
+
+        let rows = stmt
+            .query_map(params![cutoff], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, f64>(3)?,
+                ))
+            })
+            .context("run daily_totals")?;
+
+        for row in rows {
+            let (d_str, records, tokens, cost) = row.context("row daily_totals")?;
+            // SQLite's DATE() format is stable YYYY-MM-DD; parse-and-slot.
+            let Ok(d) = NaiveDate::parse_from_str(&d_str, "%Y-%m-%d") else {
+                continue;
+            };
+            if let Some(slot) = out.iter_mut().find(|t| t.date == d) {
+                slot.records = records;
+                slot.total_tokens = tokens;
+                slot.total_cost_usd = cost;
+            }
         }
 
         Ok(out)

@@ -85,6 +85,7 @@ impl Db {
 
 pub mod queries;
 
+pub use queries::DailyTotal;
 pub use queries::ModelTally;
 pub use queries::SessionSummary;
 pub use queries::SourceTally;

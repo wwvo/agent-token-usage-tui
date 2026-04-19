@@ -10,6 +10,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 
 use crate::domain::Source;
+use crate::storage::DailyTotal;
 use crate::storage::Db;
 use crate::storage::ModelTally;
 use crate::storage::SessionSummary;
@@ -24,6 +25,8 @@ pub enum View {
     Sessions,
     /// Per-model rollup, sorted by cost descending.
     Models,
+    /// 7-day cost + tokens sparkline.
+    Trend,
 }
 
 impl View {
@@ -34,13 +37,14 @@ impl View {
             Self::Overview => "Overview",
             Self::Sessions => "Sessions",
             Self::Models => "Models",
+            Self::Trend => "Trend",
         }
     }
 
-    /// Declared order for the tab bar; also drives the `1 / 2 / 3` shortcut keys.
+    /// Declared order for the tab bar; also drives the `1 / 2 / 3 / 4` shortcut keys.
     #[must_use]
-    pub const fn all() -> [Self; 3] {
-        [Self::Overview, Self::Sessions, Self::Models]
+    pub const fn all() -> [Self; 4] {
+        [Self::Overview, Self::Sessions, Self::Models, Self::Trend]
     }
 }
 
@@ -50,6 +54,12 @@ impl View {
 /// in M6 polish.
 pub const SESSIONS_PAGE: usize = 200;
 
+/// Window (in UTC days) for the Trend view.
+///
+/// 7 maps to a full week in one glance; daily buckets keep the sparkline
+/// readable on narrow terminals.
+pub const TREND_WINDOW_DAYS: usize = 7;
+
 /// Top-level TUI state.
 pub struct App {
     pub db: Db,
@@ -57,6 +67,7 @@ pub struct App {
     pub overview_rows: Vec<SourceTally>,
     pub sessions_rows: Vec<SessionSummary>,
     pub model_rows: Vec<ModelTally>,
+    pub trend_rows: Vec<DailyTotal>,
     pub selected_overview: usize,
     pub selected_sessions: usize,
     pub selected_models: usize,
@@ -74,6 +85,7 @@ impl App {
             overview_rows: Vec::new(),
             sessions_rows: Vec::new(),
             model_rows: Vec::new(),
+            trend_rows: Vec::new(),
             selected_overview: 0,
             selected_sessions: 0,
             selected_models: 0,
@@ -102,6 +114,10 @@ impl App {
         match self.db.fetch_model_tallies(None) {
             Ok(rows) => self.model_rows = rows,
             Err(e) => self.footer = Some(format!("refresh models: {e:#}")),
+        }
+        match self.db.fetch_daily_totals(TREND_WINDOW_DAYS) {
+            Ok(rows) => self.trend_rows = rows,
+            Err(e) => self.footer = Some(format!("refresh trend: {e:#}")),
         }
     }
 
@@ -140,6 +156,10 @@ impl App {
             }
             KeyCode::Char('3') => {
                 self.view = View::Models;
+                true
+            }
+            KeyCode::Char('4') => {
+                self.view = View::Trend;
                 true
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -191,6 +211,8 @@ impl App {
             View::Overview => self.overview_rows.len(),
             View::Sessions => self.sessions_rows.len(),
             View::Models => self.model_rows.len(),
+            // Trend is a chart, not a list — j/k still no-op via zero len.
+            View::Trend => 0,
         }
     }
 
@@ -199,6 +221,8 @@ impl App {
             View::Overview => &mut self.selected_overview,
             View::Sessions => &mut self.selected_sessions,
             View::Models => &mut self.selected_models,
+            // Unused for Trend but still needs a valid mut ref.
+            View::Trend => &mut self.selected_overview,
         }
     }
 

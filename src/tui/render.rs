@@ -19,11 +19,13 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Row;
+use ratatui::widgets::Sparkline;
 use ratatui::widgets::Table;
 use ratatui::widgets::TableState;
 
 use super::app::App;
 use super::app::View;
+use crate::storage::DailyTotal;
 use crate::storage::ModelTally;
 use crate::storage::SessionSummary;
 use crate::storage::SourceTally;
@@ -45,6 +47,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     draw_tabs(frame, chunks[0], app);
     match app.view {
         View::Overview => draw_overview(frame, chunks[1], app),
+        View::Trend => draw_trend(frame, chunks[1], app),
         View::Sessions => draw_sessions(frame, chunks[1], app),
         View::Models => draw_models(frame, chunks[1], app),
     }
@@ -233,6 +236,83 @@ fn model_row(m: &ModelTally) -> Row<'_> {
         Cell::from(format_int(m.total_tokens)),
         Cell::from(format_usd(m.total_cost_usd)),
     ])
+}
+
+// ---- Trend view -----------------------------------------------------------
+
+fn draw_trend(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    // Split: top half = cost sparkline, bottom half = per-day detail table.
+    // A single `Sparkline` gives a clear "shape of the week" visual; the
+    // table below answers "what were the actual numbers" without needing a
+    // separate drill-down.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7), // sparkline block (borders + 5 sample rows)
+            Constraint::Min(0),    // data table fills the rest
+        ])
+        .split(area);
+
+    draw_trend_sparkline(frame, chunks[0], &app.trend_rows);
+    draw_trend_table(frame, chunks[1], &app.trend_rows);
+}
+
+fn draw_trend_sparkline(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) {
+    // ratatui::Sparkline takes `&[u64]`. We scale cost (USD) by 10_000 so a
+    // sub-cent day still registers as a non-zero bar.
+    let data: Vec<u64> = rows
+        .iter()
+        .map(|r| (r.total_cost_usd * 10_000.0).max(0.0) as u64)
+        .collect();
+
+    let (total_cost, total_tokens) = rows.iter().fold((0.0_f64, 0_i64), |(c, t), r| {
+        (c + r.total_cost_usd, t + r.total_tokens)
+    });
+
+    let title = format!(
+        " Trend (last {} days)   total: {} tok / {} ",
+        rows.len(),
+        format_int(total_tokens),
+        format_usd(total_cost),
+    );
+
+    let spark = Sparkline::default()
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .data(&data)
+        .style(Style::default().fg(Color::Cyan));
+
+    frame.render_widget(spark, area);
+}
+
+fn draw_trend_table(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) {
+    let header = Row::new(vec!["Date", "Records", "Tokens", "Cost USD"])
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .height(1);
+
+    let data_rows: Vec<Row<'_>> = rows
+        .iter()
+        .map(|r| {
+            Row::new(vec![
+                Cell::from(r.date.format("%Y-%m-%d").to_string()),
+                Cell::from(format_int(r.records)),
+                Cell::from(format_int(r.total_tokens)),
+                Cell::from(format_usd(r.total_cost_usd)),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(12),
+        Constraint::Length(10),
+        Constraint::Length(14),
+        Constraint::Length(12),
+    ];
+
+    let table = Table::new(data_rows, widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(" Daily "));
+
+    frame.render_widget(table, area);
 }
 
 // ---- Formatting helpers ---------------------------------------------------
