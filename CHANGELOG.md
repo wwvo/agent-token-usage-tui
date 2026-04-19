@@ -132,6 +132,31 @@ First public release. Everything below is new.
 - No per-model drill-down from the Models view; only Overview → Sessions
   filtering is wired up. (Addressed in `[0.2.0]`.)
 
+[Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.1...HEAD
+[0.2.1]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.0...v0.2.1
+[0.2.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...v0.2.0
+[0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
+
+- **CI** (`.github/workflows/ci.yml`) — rustfmt / clippy (`-D warnings`) /
+  test on Ubuntu + Windows + macOS, plus a `cargo doc` gate on broken
+  intra-doc links.
+- **188 tests** (167 unit + 21 integration) covering every collector with
+  real JSONL / SQLite fixtures and full CLI-to-DB round trips.
+- **Strict clippy lint floor**: `unwrap_used`, `expect_used`,
+  `print_stdout`, `print_stderr`, `clone_on_ref_ptr`, `dbg_macro`, and
+  style denials all turned on project-wide.
+
+### Known limitations
+
+- **Windsurf** sessions required a companion VSCode extension to capture;
+  the initial `v0.1.0` release shipped a stub collector. See the
+  `[0.2.0]` Windsurf entries above for the follow-up that closes this gap.
+- No scrolling / pagination yet on the Sessions view — it shows the 200
+  most recent only. (Addressed in `[0.2.0]`: scrollbar + 2,000-row cap +
+  PageUp/PageDown.)
+- No per-model drill-down from the Models view; only Overview → Sessions
+  filtering is wired up. (Addressed in `[0.2.0]`.)
+
 [Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.0...HEAD
 [0.2.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...v0.2.0
 [0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
