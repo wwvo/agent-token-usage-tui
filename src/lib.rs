@@ -5,4 +5,11 @@
 //! companion Windsurf exporter VSCode extension planned for Phase 2).
 
 pub mod app_dir;
+pub mod cli;
+pub mod collector;
+pub mod config;
+pub mod domain;
 pub mod logging;
+pub mod pricing;
+pub mod storage;
+pub mod tui;
