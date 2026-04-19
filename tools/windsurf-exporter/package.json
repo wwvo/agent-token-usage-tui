@@ -4,6 +4,15 @@
   "description": "Thin companion extension for `agent-token-usage-tui`: polls Windsurf Cascade trajectories and writes them to JSONL files on disk so the Rust TUI can ingest them.",
   "version": "0.2.1",
   "publisher": "agent-token-usage-tui",
+  "license": "Apache-2.0",
+  "homepage": "https://cnb.cool/prevailna/agent-token-usage-tui",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wwvo/agent-token-usage-tui.git"
+  },
+  "bugs": {
+    "url": "https://cnb.cool/prevailna/agent-token-usage-tui/-/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
