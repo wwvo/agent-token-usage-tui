@@ -6,15 +6,25 @@
 //! (e.g. the Phase 2 Windsurf exporter).
 
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::Result;
 use clap::ArgAction;
 use clap::Parser;
 use clap::Subcommand;
 
+use crate::app_dir;
+use crate::collector::ClaudeCollector;
+use crate::collector::CodexCollector;
+use crate::collector::Collector;
+use crate::collector::NoopReporter;
+use crate::collector::ScanSummary;
 use crate::logging;
 use crate::logging::LogMode;
+use crate::pricing::cost::calc_cost;
+use crate::storage::Db;
 
 /// Top-level CLI schema.
 ///
@@ -86,16 +96,94 @@ pub fn run() -> Result<()> {
             // M5 C6 replaces this with `tui::run(...).await` under a tokio runtime.
             todo!("TUI entry point lands in M5 C6; use `version` / `scan` subcommands for now")
         }
-        Some(Commands::Scan) => {
-            // M4 C5 wires up `pipeline::run_scan` here.
-            todo!("scan pipeline lands in M4 C5")
-        }
+        Some(Commands::Scan) => run_scan(cli.data_dir.as_deref()),
         Some(Commands::SyncPrices) => {
             // M2 C7 implements `pricing::sync_or_fallback`; M4 C5 calls it here.
             todo!("pricing sync lands in M2 C7 + M4 C5")
         }
         Some(Commands::Version) => print_version(),
     }
+}
+
+/// Resolve the database path honoring the `--data-dir` override.
+///
+/// When an explicit directory is supplied we land `data.db` in it; otherwise
+/// we defer to the portable `app_dir::db_path()` (alongside the executable).
+fn resolve_db_path(data_dir: Option<&Path>) -> Result<PathBuf> {
+    match data_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("create --data-dir {}", dir.display()))?;
+            Ok(dir.join("data.db"))
+        }
+        None => app_dir::db_path(),
+    }
+}
+
+/// `atut scan` — crawl every known agent and print a compact summary.
+///
+/// Inlines Claude + Codex collectors here rather than through a `pipeline`
+/// abstraction; that's scheduled for M4 C5 when OpenClaw and OpenCode join
+/// the set. Uses a dedicated current-thread tokio runtime so the sync `run()`
+/// dispatcher doesn't have to depend on `#[tokio::main]`; when the TUI lands
+/// in M5 C6 we can hoist the runtime into `run()`.
+///
+/// Cost recomputation runs post-scan **only if** the pricing table already has
+/// rows (from a prior `sync-prices` call or the TUI's startup sync). That
+/// keeps `atut scan` fully offline-capable as documented.
+fn run_scan(data_dir: Option<&Path>) -> Result<()> {
+    let db_path = resolve_db_path(data_dir)?;
+    let db =
+        Db::open(&db_path).with_context(|| format!("open database at {}", db_path.display()))?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for scan")?;
+
+    let summaries = rt.block_on(async {
+        let claude = ClaudeCollector::with_default_paths();
+        let codex = CodexCollector::with_default_paths();
+
+        let claude_summary = claude.scan(&db, &NoopReporter).await?;
+        let codex_summary = codex.scan(&db, &NoopReporter).await?;
+
+        Ok::<_, anyhow::Error>(vec![claude_summary, codex_summary])
+    })?;
+
+    // Best-effort cost recompute: empty pricing table → silent no-op.
+    let prices = db.get_all_pricing().context("read pricing table")?;
+    let costs_updated = if prices.is_empty() {
+        0
+    } else {
+        db.recalc_costs(&prices, calc_cost)
+            .context("recalculate costs after scan")?
+    };
+
+    print_scan_summary(&summaries, costs_updated)
+}
+
+/// Emit a compact one-line-per-source summary table to stdout.
+///
+/// Acquired-handle `writeln!` instead of `println!` to keep `clippy::print_stdout`
+/// enforced (same rationale as [`print_version`]).
+fn print_scan_summary(summaries: &[ScanSummary], costs_updated: usize) -> Result<()> {
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "Scan complete:")?;
+    for s in summaries {
+        writeln!(
+            out,
+            "  {:<8} files={:<4} records={:<5} prompts={:<5} sessions={:<3} errors={}",
+            format!("{}:", s.source),
+            s.files_scanned,
+            s.records_inserted,
+            s.prompts_inserted,
+            s.sessions_touched,
+            s.errors.len(),
+        )?;
+    }
+    writeln!(out, "  costs:   {costs_updated} rows re-priced")?;
+    Ok(())
 }
 
 /// Write the short version line to stdout.
