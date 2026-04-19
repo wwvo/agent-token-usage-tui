@@ -179,10 +179,45 @@ jobs:
             ${{ steps.stage.outputs.stage }}.${{ matrix.archive }}.sha256
           if-no-files-found: error
 
+  # Package the companion VSCode extension alongside the Rust matrix.
+  # Output `.vsix` uploads as a workflow artifact; the `release` job
+  # below downloads every artifact into `dist/` (merge-multiple: true)
+  # so the Rust archives and the vsix all flow through one attach pass.
+  #
+  # Independent job (not a matrix leg) because the tooling is entirely
+  # different — Node vs Rust — and keeping them separate makes failure
+  # reasons unambiguous: "Rust build broke for target X" vs "exporter
+  # vsix packaging failed".
+  exporter-vsix:
+    name: Package Windsurf exporter (vsix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/windsurf-exporter/package-lock.json
+      # `npm run package` delegates to `vsce package --no-dependencies`;
+      # the exporter ships zero runtime deps so vsce doesn't need to
+      # walk `node_modules`. Output file name includes the version from
+      # `package.json` (kept in sync with the crate via release-prepare).
+      - name: Build vsix
+        working-directory: tools/windsurf-exporter
+        run: |
+          npm ci --loglevel=error
+          npm run package
+      - name: Upload vsix as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windsurf-exporter-vsix
+          path: tools/windsurf-exporter/*.vsix
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, exporter-vsix]
     steps:
       - uses: actions/checkout@v4
         with:

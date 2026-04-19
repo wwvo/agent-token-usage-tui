@@ -322,3 +322,38 @@ $:
             attachments:
               - "./atut-*-arm64-linux.tar.gz"
               - "./atut-*-arm64-linux.tar.gz.sha256"
+
+    # Package the companion VSCode extension as a third release artifact.
+    # The vsix is arch-independent (pure JavaScript), so one pipeline
+    # suffices. Runs in a Node image on amd64 in parallel with the two
+    # Rust legs; gates on the same `atut-release-ready` key as arm64 so
+    # it waits for amd64 to create the Release before attaching.
+    #
+    # Output `agent-token-usage-tui-windsurf-exporter-X.Y.Z.vsix` is
+    # moved to the workspace root where `cnbcool/attachments` expects it
+    # (matches the amd64/arm64 legs' `./atut-*` glob convention).
+    - name: release-vsix
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: node:20-slim
+      stages:
+        - name: package
+          script: |
+            set -eu
+            cd tools/windsurf-exporter
+            npm ci --loglevel=error
+            npm run package
+            # vsce drops the vsix into the package dir; relocate to
+            # repo root so the attachments glob below can find it.
+            mv *.vsix ../../
+            ls -la ../../*.vsix
+        - name: wait-release-ready
+          type: cnb:await
+          options:
+            key: atut-release-ready
+        - name: upload-vsix
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./agent-token-usage-tui-windsurf-exporter-*.vsix"
