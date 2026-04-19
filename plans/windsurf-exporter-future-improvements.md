@@ -1,6 +1,6 @@
 # Windsurf exporter — future improvements (post-v0.2.9)
 
-*Status: notes only. Nothing in here is on the short-term roadmap.*
+_Status: notes only. Nothing in here is on the short-term roadmap._
 
 v0.2.9 ships a working exporter, but at three points the design makes
 deliberate compromises because we didn't know the ground truth of the
@@ -18,7 +18,7 @@ future v0.2.10 / v0.3 can pick it up without re-discovering it.
   "metadata": {
     "createdAt": "2025-01-11T13:23:18.978469600Z",
     "source": "CORTEX_STEP_SOURCE_USER_EXPLICIT",
-    "executionId": "3e5d8214-d106-4407-b6e5-39d34bccbd79"
+    "executionId": "3e5d8214-d106-4407-b6e5-39d34bccbd79",
   },
   "userInput": {
     "userResponse": "…",
@@ -27,10 +27,10 @@ future v0.2.10 / v0.3 can pick it up without re-discovering it.
         "absoluteUri": "file:///c:/Users/.../sanitation/staged_changes.diff",
         "workspaceUri": "file:///c:/Users/.../sanitation",
         "editorLanguage": "diff",
-        "lineEnding": "\n"
-      }
-    }
-  }
+        "lineEnding": "\n",
+      },
+    },
+  },
 }
 ```
 
@@ -45,7 +45,7 @@ And the real trajectory summary:
   "status": "CASCADE_RUN_STATUS_IDLE",
   "lastUserInputTime": "2025-01-11T13:23:18.978469600Z",
   "trajectoryType": "CORTEX_TRAJECTORY_TYPE_CASCADE",
-  "referencedFiles": ["…"]
+  "referencedFiles": ["…"],
 }
 ```
 
@@ -58,11 +58,11 @@ Note what's **not** there: the summary carries no `workspaces` array, no `worksp
 **Today (v0.2.9)**. `extractTurnUsage` assembles `timestamp` via a fallback chain:
 
 ```ts
-step.timestamp
-  || summary.lastUserInputTime
-  || summary.lastModifiedTime
-  || summary.createdTime
-  || ""
+step.timestamp ||
+  summary.lastUserInputTime ||
+  summary.lastModifiedTime ||
+  summary.createdTime ||
+  "";
 ```
 
 `step.timestamp` is always `""` in practice, so every turn inherits the per-cascade `lastUserInputTime`. All N turns in a cascade share one timestamp — the Trend view can't distinguish them.
@@ -79,7 +79,7 @@ step.timestamp
 
 **Today**. `session_meta.workspace` is a per-cascade field whose source (`summary.workspaces`) doesn't exist. 32% empty on the dev machine.
 
-**Upgrade**. Every `USER_INPUT` step carries `userInput.activeUserState.activeDocument.workspaceUri`. That's *per-turn* workspace resolution — a single cascade can span multiple workspaces if the user switches mid-conversation, and the per-turn data captures it.
+**Upgrade**. Every `USER_INPUT` step carries `userInput.activeUserState.activeDocument.workspaceUri`. That's _per-turn_ workspace resolution — a single cascade can span multiple workspaces if the user switches mid-conversation, and the per-turn data captures it.
 
 Schema options:
 
@@ -92,7 +92,7 @@ The non-breaking path is preferred — keeps old `.jsonl` files readable by the 
 
 A scratch repo at `C:\Users\Administrator\code\windsurf-leveldb-probe\` proves Chromium's `Local Storage/leveldb/` for Windsurf can be read out-of-process with `classic-level` (copy the directory to a tmp location to sidestep the LOCK file, then iterate). Three keys are useful there:
 
-- `cascade-open-sessions-by-workspace` — workspace → cascade id reverse map, but only for *currently open* cascade tabs.
+- `cascade-open-sessions-by-workspace` — workspace → cascade id reverse map, but only for _currently open_ cascade tabs.
 - `cascade-last-viewed-at` — per-cascade last-view timestamp.
 - `cascade-tab-editor-state` — draft Lexical editor content (not useful for token tracking).
 
@@ -101,7 +101,7 @@ ROI is **lower than just reading the step fields above**:
 - The three step fields are 100% coverage (every `USER_INPUT` step has them).
 - LevelDB coverage is limited to open tabs (~6 / 50 on the dev machine).
 - LevelDB requires copy-to-tmp + cross-platform path handling + a new dep (Rust) or a rewrite to TS.
-- The reference user (`exposuresolutions/achill-island-market` in their `docs/ai_memories.md`) only reached LevelDB after *losing* their Windsurf install, i.e. it's a recovery tool, not a first-class datasource.
+- The reference user (`exposuresolutions/achill-island-market` in their `docs/ai_memories.md`) only reached LevelDB after _losing_ their Windsurf install, i.e. it's a recovery tool, not a first-class datasource.
 
 Keep the probe around as documentation of what's possible; don't wire it into the exporter.
 
@@ -109,12 +109,12 @@ Keep the probe around as documentation of what's possible; don't wire it into th
 
 A second probe (see `fetch-cascade.js` in the scratch repo) fetched full step lists for two cascades and bucketed them by `status`:
 
-| Cascade | Age when fetched | Steps returned | `DONE` | `CLEARED` | Content retention |
-|---|---|---|---|---|---|
-| "Refine Changelog and Release Notes" | 0 days | 591 | 578 | 0 | 100% |
-| "Phase 9 D2D Migration" | 2 days | 2972 | 110 | 2862 | 3.7% |
+| Cascade                              | Age when fetched | Steps returned | `DONE` | `CLEARED` | Content retention |
+| ------------------------------------ | ---------------- | -------------- | ------ | --------- | ----------------- |
+| "Refine Changelog and Release Notes" | 0 days           | 591            | 578    | 0         | 100%              |
+| "Phase 9 D2D Migration"              | 2 days           | 2972           | 110    | 2862      | 3.7%              |
 
-Interpretation. Windsurf's Language Server keeps full step content (`plannerResponse`, `codeAction`, `runCommand`, `userInput`, …) for recent cascades and GC's the content on older steps, leaving only `metadata` + `responseDimensionGroups`. Token statistics survive the GC, which is why the exporter's usage accounting is unaffected. Conversation *replay*, on the other hand, is only possible for recent cascades.
+Interpretation. Windsurf's Language Server keeps full step content (`plannerResponse`, `codeAction`, `runCommand`, `userInput`, …) for recent cascades and GC's the content on older steps, leaving only `metadata` + `responseDimensionGroups`. Token statistics survive the GC, which is why the exporter's usage accounting is unaffected. Conversation _replay_, on the other hand, is only possible for recent cascades.
 
 The exact GC policy (time-based vs step-count-based vs mixed) isn't known — we only have two data points and they don't bracket the cutoff. Running `fetch-cascade.js` against all 50 cascades would give enough data to curve-fit, but it isn't required for the exporter's current scope.
 
@@ -141,12 +141,12 @@ Two non-DONE statuses also carry content:
 
 `aggregate.js` in the scratch repo reads only `~/.atut/windsurf-sessions/*.jsonl` (no Windsurf RPC) and rolls up per-cascade totals. Side-by-side with the Windsurf Token Usage extension's dashboard screenshot the user captured on 2026-04-20:
 
-| Conversation | Reference dashboard | atut JSONL rollup |
-|---|---|---|
-| #1 Implement Settings Panel | 75 turns / 992.6M | 75 / 992.6M ✓ |
-| #2 Phase 9 D2D Migration | 38 / 360.5M | 38 / 360.5M ✓ |
-| #3 Refine Changelog and Release Notes | 10 / 76.2M | 10 / 76.2M ✓ |
-| (grand total) | 50 conv. / 1447.8M | 50 / 1.45B ✓ |
+| Conversation                          | Reference dashboard | atut JSONL rollup |
+| ------------------------------------- | ------------------- | ----------------- |
+| #1 Implement Settings Panel           | 75 turns / 992.6M   | 75 / 992.6M ✓     |
+| #2 Phase 9 D2D Migration              | 38 / 360.5M         | 38 / 360.5M ✓     |
+| #3 Refine Changelog and Release Notes | 10 / 76.2M          | 10 / 76.2M ✓      |
+| (grand total)                         | 50 conv. / 1447.8M  | 50 / 1.45B ✓      |
 
 Conclusion: the exporter loses no data vs the reference. The only gap is presentation — atut's current TUI aggregates everything into a single `windsurf` row in Overview; surfacing per-cascade rows would require a new TUI view, not more exporter work.
 
@@ -167,3 +167,40 @@ When we come back to this, a reasonable v0.2.10 shape is:
 1. Upgrade `timestamp` to `step.metadata.createdAt` (smallest change, immediate visible win).
 2. Upgrade `step_id` to `step.metadata.executionId` (robustness, no visible change).
 3. Defer the `workspace` schema promotion to v0.3 along with the TUI's eventual per-project breakdown.
+
+## Which of the probed fields actually matter for token tracking
+
+Most of the new fields from the retention probe are orthogonal to atut's charter (token accounting). Ranking by usefulness to our actual mandate:
+
+| Field                                                        | Why it matters to tokens                                                                                    | Priority                   |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `step.metadata.createdAt`                                    | Nanosecond per-step timestamp → upgrades the "last 7 days" view from per-cascade resolution to per-turn     | high                       |
+| `step.metadata.modelCost` / `modelUsage` (CHECKPOINT steps)  | Windsurf's own USD figure → cross-check atut's `pricing::cost::calc_cost` drift, flag when litellm is stale | medium                     |
+| `step.userInput.activeUserState.activeDocument.workspaceUri` | Per-turn workspace → enables a per-project rollup in the TUI without inferring from filename patterns       | medium                     |
+| `step.type` distribution (edit/view/run/grep ratio)          | Agent behavior analytics                                                                                    | low (orthogonal to tokens) |
+| `STATUS_ERROR` count                                         | Tool-call failure rate                                                                                      | low (orthogonal)           |
+| `step.codeAction` / `runCommand` raw args                    | Conversation replay                                                                                         | out of scope               |
+
+## Planned TUI views (no exporter or collector changes needed)
+
+Both of these are TUI-only work. The data is already in `data.db`; these views just `SELECT` and render.
+
+### View A — "Last 7 / 30 days" bar chart
+
+Purpose: quick visual "how hard have I been hitting the agent this week / month".
+
+- **Data**: `SELECT date(timestamp), SUM(input_tokens + output_tokens) FROM usage_records WHERE timestamp >= date('now','-30 days') GROUP BY date(timestamp)`. Optionally split by `source` for a grouped bar chart.
+- **Widget**: `ratatui::widgets::BarChart` (already transitively available via the `ratatui = "0.29"` dep). No new crate.
+- **Keybind**: unassigned — probably `3` to slot between Overview (`1`) / Sessions (`2`) and the TUI's existing deeper views.
+- **Cost**: one new view module (~150 loc), one SQL helper, one `BarChart` assembly. No schema change, no migration.
+
+### View B — Per-cascade "Sessions" drill-down
+
+Purpose: reproduce the per-conversation list the reference UI shows (see `aggregate.js` in the scratch repo — the SQL behind the view would deliver the same rollup).
+
+- **Data**: `SELECT session_id, COUNT(*) AS turns, SUM(input_tokens), SUM(output_tokens), SUM(cached_input_tokens), SUM(cost_usd) FROM usage_records WHERE source='windsurf' GROUP BY session_id ORDER BY SUM(...) DESC`. Join on the Windsurf `session_meta` to pull the `summary` title + `workspace`.
+- **Widget**: `ratatui::widgets::Table` with per-row mini `Sparkline` for the per-day trend.
+- **Gap**: `session_meta.summary` currently lives only in the JSONL, not in `data.db`. Needs either (a) a new table `windsurf_sessions` written by the collector, or (b) on-demand parse-and-cache from the JSONL at view-open time. (a) is cleaner.
+- **Cost**: one new collector side-effect (`INSERT OR REPLACE INTO windsurf_sessions`), one table migration, one view module. Larger than View A.
+
+Both views are decoupled from the exporter-side schema work above — they can ship in any order.
