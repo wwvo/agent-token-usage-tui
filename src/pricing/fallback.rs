@@ -13,8 +13,6 @@
 //! sibling fields for cost-per-token. We keep only the four cost fields our
 //! pricing schema uses and ignore the rest (context window, provider, etc).
 
-use chrono::Utc;
-
 use crate::domain::ModelPrice;
 
 /// Raw bytes of the JSON catalog embedded at compile time.
@@ -38,54 +36,7 @@ pub const FALLBACK_BYTES: &[u8] = include_bytes!("../../assets/litellm-prices.fa
 /// build with an empty placeholder is still usable.
 #[must_use]
 pub fn fallback_prices() -> Vec<ModelPrice> {
-    let raw: serde_json::Value = match serde_json::from_slice(FALLBACK_BYTES) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "embedded litellm fallback JSON is invalid");
-            return Vec::new();
-        }
-    };
-
-    let Some(obj) = raw.as_object() else {
-        tracing::error!("embedded litellm fallback JSON is not a top-level object");
-        return Vec::new();
-    };
-
-    let now = Utc::now();
-    let mut out = Vec::with_capacity(obj.len());
-
-    for (model, val) in obj {
-        if model == "sample_spec" {
-            continue;
-        }
-
-        let (Some(input), Some(output)) = (
-            val.get("input_cost_per_token").and_then(|v| v.as_f64()),
-            val.get("output_cost_per_token").and_then(|v| v.as_f64()),
-        ) else {
-            continue;
-        };
-
-        let cache_read = val
-            .get("cache_read_input_token_cost")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let cache_creation = val
-            .get("cache_creation_input_token_cost")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        out.push(ModelPrice {
-            model: model.clone(),
-            input_cost_per_token: input,
-            output_cost_per_token: output,
-            cache_read_input_token_cost: cache_read,
-            cache_creation_input_token_cost: cache_creation,
-            updated_at: now,
-        });
-    }
-
-    out
+    super::parse_litellm_json(FALLBACK_BYTES)
 }
 
 #[cfg(test)]
