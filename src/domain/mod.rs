@@ -1,4 +1,18 @@
 //! Domain types shared across storage, collector, pricing, and TUI.
 //!
-//! Populated in M2 C1 (`Source`, `UsageRecord`, `SessionRecord`,
-//! `PromptEvent`, `ModelPrice`).
+//! Kept free of heavy dependencies (only `chrono` + `serde` + `thiserror`) so
+//! this module can be re-exported from any layer without pulling in rusqlite
+//! or reqwest.
+
+mod price;
+mod prompt;
+mod record;
+mod session;
+mod source;
+
+pub use price::ModelPrice;
+pub use prompt::PromptEvent;
+pub use record::UsageRecord;
+pub use session::SessionRecord;
+pub use source::Source;
+pub use source::UnknownSource;
