@@ -45,16 +45,16 @@ fn scan_against_empty_home_exits_cleanly_and_prints_summary() {
         stdout.contains("Scan complete:"),
         "missing header. stdout:\n{stdout}",
     );
-    assert!(
-        stdout.contains("claude:"),
-        "missing claude line. stdout:\n{stdout}",
-    );
-    assert!(
-        stdout.contains("codex:"),
-        "missing codex line. stdout:\n{stdout}",
-    );
-    // Empty HOME means zero files to scan — lock this to catch regressions
-    // where the binary accidentally uses the real user's sessions dir.
+    // All five sources must show up in the summary table, even if empty,
+    // so the user can see coverage at a glance.
+    for src in ["claude:", "codex:", "openclaw:", "opencode:", "windsurf:"] {
+        assert!(
+            stdout.contains(src),
+            "missing {src} line. stdout:\n{stdout}",
+        );
+    }
+    // Empty HOME + empty config means zero files — catches regressions that
+    // accidentally point collectors at the developer's real sessions.
     assert!(
         stdout.contains("files=0"),
         "expected files=0 on empty HOME. stdout:\n{stdout}",

@@ -10,6 +10,7 @@ pub mod collector;
 pub mod config;
 pub mod domain;
 pub mod logging;
+pub mod pipeline;
 pub mod pricing;
 pub mod storage;
 pub mod tui;

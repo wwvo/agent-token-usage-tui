@@ -16,14 +16,12 @@ use clap::Parser;
 use clap::Subcommand;
 
 use crate::app_dir;
-use crate::collector::ClaudeCollector;
-use crate::collector::CodexCollector;
-use crate::collector::Collector;
 use crate::collector::NoopReporter;
 use crate::collector::ScanSummary;
 use crate::logging;
 use crate::logging::LogMode;
-use crate::pricing::cost::calc_cost;
+use crate::pipeline::PipelineConfig;
+use crate::pipeline::run_scan as pipeline_run_scan;
 use crate::storage::Db;
 
 /// Top-level CLI schema.
@@ -141,26 +139,16 @@ fn run_scan(data_dir: Option<&Path>) -> Result<()> {
         .build()
         .context("build tokio runtime for scan")?;
 
-    let summaries = rt.block_on(async {
-        let claude = ClaudeCollector::with_default_paths();
-        let codex = CodexCollector::with_default_paths();
+    // TODO(M6 C2): populate from parsed config.toml. Until then OpenClaw /
+    // OpenCode / Windsurf have no data to ingest — that's fine; the pipeline
+    // treats empty base lists as "collector finds nothing".
+    let config = PipelineConfig::default();
 
-        let claude_summary = claude.scan(&db, &NoopReporter).await?;
-        let codex_summary = codex.scan(&db, &NoopReporter).await?;
+    let report = rt
+        .block_on(pipeline_run_scan(&db, &NoopReporter, &config))
+        .context("run scan pipeline")?;
 
-        Ok::<_, anyhow::Error>(vec![claude_summary, codex_summary])
-    })?;
-
-    // Best-effort cost recompute: empty pricing table → silent no-op.
-    let prices = db.get_all_pricing().context("read pricing table")?;
-    let costs_updated = if prices.is_empty() {
-        0
-    } else {
-        db.recalc_costs(&prices, calc_cost)
-            .context("recalculate costs after scan")?
-    };
-
-    print_scan_summary(&summaries, costs_updated)
+    print_scan_summary(&report.summaries, report.costs_recalculated)
 }
 
 /// Emit a compact one-line-per-source summary table to stdout.
