@@ -10,6 +10,11 @@
 # - `$.pull_request`   → fmt-check + clippy + test on amd64 for any branch
 #                        opening a PR. `$` is cnb's catch-all branch match,
 #                        so PR branches don't also match the `main` key.
+# - `$.tag_push`       → build release artifacts for `vX.Y.Z` tags on both
+#                        amd64 and arm64 Linux, leaving `atut-<tag>-<arch>-
+#                        linux.tar.gz` + a `*.sha256` checksum in the
+#                        workspace for cnb to surface as downloadable
+#                        pipeline artifacts.
 #
 # Environment
 # -----------
@@ -72,7 +77,9 @@ main:
           script: cargo test --locked
 
 # Catch-all branch (`$`) — PR events. Lives separately from `main.push`
-# so a merge to `main` doesn't run amd64 fmt+clippy+test twice.
+# so a merge to `main` doesn't run amd64 fmt+clippy+test twice. The same
+# catch-all also hosts `tag_push`, since tags live on a detached ref that
+# isn't `main` itself.
 $:
   pull_request:
     - name: lint-and-test-pr
@@ -95,3 +102,86 @@ $:
           script: cargo clippy --all-targets --locked -- -D warnings
         - name: test
           script: cargo test --locked
+
+  # Release pipelines — one per Linux architecture. Each produces a
+  # stripped binary inside a versioned tarball plus a side-by-side
+  # sha256 checksum, left in the workspace root so cnb's UI can expose
+  # them as downloadable pipeline artifacts.
+  #
+  # Naming:
+  #   atut-<tag>-<arch>-linux.tar.gz     ← binary + LICENSE + README + CHANGELOG
+  #   atut-<tag>-<arch>-linux.tar.gz.sha256
+  #
+  # Tag resolution: `$CNB_BRANCH` in a `tag_push` build equals the tag
+  # name (e.g. `v0.1.1`). We still shell out to `git describe --tags
+  # --always --dirty` as a belt-and-braces fallback for local testing
+  # via `cnb run` where the env var may be absent.
+  tag_push:
+    - name: release-linux-amd64
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: rust:1.85-slim
+      env:
+        AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+        CARGO_TERM_COLOR: "always"
+        TARGET_ARCH: "amd64"
+      stages:
+        - name: apt-deps
+          script: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              libssl-dev pkg-config git ca-certificates
+        - name: build-dist
+          # `--profile dist` maps to the optimized profile defined in
+          # Cargo.toml (LTO + panic=abort + strip symbols), yielding a
+          # single-binary release suitable for tarball distribution.
+          script: cargo build --profile dist --locked
+        - name: package
+          # One large script so intermediate variables (TAG, STAGE) don't
+          # need to survive across stages — simpler than exporting envs.
+          script: |
+            set -euo pipefail
+            TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
+            STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
+            mkdir -p "${STAGE}"
+            cp target/dist/atut "${STAGE}/"
+            # `strip` is idempotent after dist profile's `strip = true`, but
+            # the Rust linker on slim images sometimes leaves symbols in
+            # the dwarf section. A belt-and-braces pass keeps binary size
+            # predictable (~4-6 MB).
+            strip "${STAGE}/atut" || true
+            cp README.md CHANGELOG.md LICENSE "${STAGE}/"
+            tar czf "${STAGE}.tar.gz" "${STAGE}"
+            sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+            ls -la "${STAGE}.tar.gz"*
+
+    - name: release-linux-arm64
+      runner:
+        tags: cnb:arch:arm64:v8
+      docker:
+        image: rust:1.85-slim
+      env:
+        AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+        CARGO_TERM_COLOR: "always"
+        TARGET_ARCH: "arm64"
+      stages:
+        - name: apt-deps
+          script: |
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              libssl-dev pkg-config git ca-certificates
+        - name: build-dist
+          script: cargo build --profile dist --locked
+        - name: package
+          script: |
+            set -euo pipefail
+            TAG="${CNB_BRANCH:-$(git describe --tags --always --dirty)}"
+            STAGE="atut-${TAG}-${TARGET_ARCH}-linux"
+            mkdir -p "${STAGE}"
+            cp target/dist/atut "${STAGE}/"
+            strip "${STAGE}/atut" || true
+            cp README.md CHANGELOG.md LICENSE "${STAGE}/"
+            tar czf "${STAGE}.tar.gz" "${STAGE}"
+            sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+            ls -la "${STAGE}.tar.gz"*
