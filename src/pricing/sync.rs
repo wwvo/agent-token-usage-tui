@@ -1,7 +1,7 @@
 //! Runtime litellm pricing fetch.
 //!
 //! Called by [`super::sync_or_fallback`] when the on-disk cache has gone stale.
-//! The byte-level parsing and filtering live in [`super::parse_litellm_json`]
+//! The byte-level parsing and filtering live in `super::parse_litellm_json`
 //! so this module only deals with the HTTP round-trip.
 
 use std::time::Duration;
@@ -26,7 +26,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// # Errors
 ///
 /// Returns any network / HTTP / body-read error. Parsing errors degrade to
-/// `Ok(Vec::new())` inside [`super::parse_litellm_json`], so the caller
+/// `Ok(Vec::new())` inside `super::parse_litellm_json`, so the caller
 /// distinguishes "no network" from "empty catalog" via the returned vector.
 pub async fn sync_from_github() -> Result<Vec<ModelPrice>> {
     let client = Client::builder()

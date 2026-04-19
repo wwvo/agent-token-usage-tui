@@ -36,7 +36,7 @@
 //!
 //! # Watermark
 //!
-//! We reuse [`Db::file_state`] to remember the maximum `message.time_created`
+//! We reuse `Db::get_file_state` / `Db::set_file_state` to remember the maximum `message.time_created`
 //! we've already ingested — the `last_offset` column is repurposed as a
 //! millisecond watermark. That keeps the storage schema unchanged at the
 //! cost of a single abstraction bent.

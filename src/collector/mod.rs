@@ -2,9 +2,9 @@
 //!
 //! # Architecture
 //!
-//! Each agent is its own struct implementing [`Collector`]; the [`pipeline`]
-//! module (M4 C4) drives a `Vec<Box<dyn Collector>>`-equivalent via an
-//! [`AnyCollector`] enum so we avoid `async_trait` overhead.
+//! Each agent is its own struct implementing [`Collector`]; the
+//! [`crate::pipeline`] module drives the set sequentially, avoiding the
+//! `async_trait` crate and `dyn Collector` entirely.
 //!
 //! # Roll-in schedule
 //!
@@ -86,9 +86,9 @@ impl ScanSummary {
 ///   aborting the whole scan.
 ///
 /// `async fn` in traits is native to Rust 1.75+; we deliberately do **not**
-/// expose this trait as `dyn Collector` — the pipeline uses an
-/// [`AnyCollector`] enum instead, which keeps dispatch static-friendly and
-/// avoids the `async_trait` crate.
+/// expose this trait as `dyn Collector` — the pipeline uses generic
+/// monomorphization via [`crate::pipeline::run_scan`] instead, which keeps
+/// dispatch static-friendly and avoids the `async_trait` crate.
 pub trait Collector: Send + Sync {
     /// Which agent this collector targets.
     fn source(&self) -> Source;

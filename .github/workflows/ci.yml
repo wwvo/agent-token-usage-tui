@@ -1,0 +1,79 @@
+# Continuous integration for agent-token-usage-tui.
+#
+# Runs on every push to `main` and every pull request. We check three OSes
+# because the codebase touches Windows-only terminal modes (crossterm raw
+# mode + alt-screen), macOS path semantics, and Linux / CI defaults.
+#
+# `AGENT_TUI_DISABLE_LITELLM_DOWNLOAD=1` forces `build.rs` onto the offline
+# path so CI doesn't hit GitHub raw every job — the embedded fallback
+# snapshot is good enough for tests.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Crate-wide lint policy in Cargo.toml is already strict (`unwrap_used`,
+      # `print_stdout`, etc.); `-D warnings` turns any remaining clippy hint
+      # into a hard failure so the lint floor only ratchets upward.
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --no-fail-fast
+
+  docs:
+    name: Doc build
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Rejects broken intra-doc links on the public API surface.
+      # We deliberately skip `--document-private-items` because that would
+      # also fire missing-docs on every helper fn; those aren't part of the
+      # contract and should stay unencumbered.
+      - run: cargo doc --no-deps

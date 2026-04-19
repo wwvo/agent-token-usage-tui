@@ -1,5 +1,8 @@
 # agent-token-usage-tui
 
+[![CI](https://github.com/briqt/agent-token-usage-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/briqt/agent-token-usage-tui/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 > Cross-platform terminal UI that aggregates **Claude Code / Codex / OpenClaw / OpenCode** sessions and reports token usage and cost.
 
 A pure TUI — no web dashboard, no background daemon. Data, config, logs, and
@@ -120,7 +123,13 @@ gRPC endpoint. That's incompatible with a pure Rust CLI.
 The Phase 2 plan is a **thin companion VSCode extension** that polls
 `GetAllCascadeTrajectories` every ~60s and writes JSONL files to
 `<exe-dir>/windsurf-sessions/*.jsonl`. `collector::windsurf` (placeholder
-today) will then read those files like any other agent. See
+todahangelog
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the release history. The format
+follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## Cy) will then read those files like any other agent. See
+
 `plans/agent-token-usage-tui-architecture-77d40b.md` §13 for the design.
 
 ## Contributing

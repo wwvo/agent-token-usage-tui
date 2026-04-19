@@ -36,8 +36,9 @@ pub enum PricingSyncOutcome {
 impl std::fmt::Display for PricingSyncOutcome {
     /// Human-readable form for startup / CLI summaries.
     ///
-    /// Shape: "<N> models (<source>)" — concise enough to append to a
-    /// progress line, detailed enough for a bug report.
+    /// Shape: `<N> models (fresh|network|fallback)` where `N` is the row
+    /// count; terse enough to append to a progress line, detailed enough
+    /// for a bug report.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::StillFresh { models } => write!(f, "{models} models (fresh)"),

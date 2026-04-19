@@ -76,7 +76,7 @@ const VERSION_REPLACEMENTS: &[(&str, &str)] = &[
 /// Find the pricing entry best matching `model` in `all_prices`.
 ///
 /// Returns `None` when no candidate can be identified. See module docs for the
-/// matching strategy and the [`VERSION_REPLACEMENTS`] / [`PROVIDER_PREFIXES`]
+/// matching strategy and the `VERSION_REPLACEMENTS` / `PROVIDER_PREFIXES`
 /// tunables.
 #[must_use]
 pub fn match_pricing<'a>(

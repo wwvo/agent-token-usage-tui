@@ -5,7 +5,7 @@
 //! Migrations are identified by short stable strings (`"001_init"`) and
 //! tracked in the `meta` table under keys like `migration_<id> = "done"`. The
 //! driver is intentionally minimal: each migration is a string of SQL that
-//! runs exactly once per database, in the order listed in [`MIGRATIONS`].
+//! runs exactly once per database, in the order listed in the private `MIGRATIONS` table.
 //!
 //! The bootstrap `meta` table is created eagerly before we read migration
 //! state, so the very first migration (`001_init`) can also re-declare `meta`

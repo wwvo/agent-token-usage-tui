@@ -56,7 +56,7 @@ impl StartupReporter {
         let _ = std::io::stderr().flush();
     }
 
-    /// Overwrite the in-progress line with "[OK] {name}  {detail}".
+    /// Overwrite the in-progress line with `\[OK\] {name}  {detail}`.
     ///
     /// `detail` is a trailing annotation (e.g. "42 models", "18 recs / …")
     /// that gives the user just enough context to see the work *happened*.
