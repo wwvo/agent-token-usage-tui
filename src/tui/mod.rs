@@ -16,6 +16,7 @@ pub use app::View;
 
 use std::io::Stdout;
 use std::io::stdout;
+use std::panic;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -47,12 +48,38 @@ const TICK: Duration = Duration::from_millis(200);
 /// is synchronous; the Tokio runtime is in the picture because future
 /// refreshes will want `tokio::spawn` for background rescans).
 pub async fn run(db: Db) -> Result<()> {
+    install_panic_hook();
     let mut terminal = enter_terminal().context("enter terminal raw mode")?;
     let result = run_loop(&mut terminal, db).await;
     // Restore the terminal *before* propagating any error so stale raw mode
     // doesn't leave the user's shell unusable.
     let leave = leave_terminal(&mut terminal);
     result.and(leave)
+}
+
+/// Wrap the existing panic hook so a crash inside the draw loop restores
+/// the terminal *before* the default hook writes its backtrace.
+///
+/// Without this, a `panic!` while in raw-mode + alt-screen leaves the
+/// user's shell with invisible input and no scrollback — a worse failure
+/// mode than the panic itself. By running `disable_raw_mode` and
+/// `LeaveAlternateScreen` first we guarantee the backtrace is readable
+/// and the shell stays usable.
+///
+/// Both crossterm calls are best-effort (`let _ = ...`): if they fail
+/// we're already panicking and there's nothing productive to report.
+///
+/// We install but don't restore: `atut tui` is always a terminal action,
+/// so the process exits right after `run` returns. Restoring would mean
+/// threading an `Arc<dyn Fn + Send + Sync>` through `set_hook` just to
+/// swap it back, which buys nothing today.
+fn install_panic_hook() {
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        default_hook(info);
+    }));
 }
 
 /// Inner loop extracted so `run` can always restore the terminal, even on error.

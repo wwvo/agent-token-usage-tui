@@ -34,6 +34,38 @@ use crate::storage::ModelTally;
 use crate::storage::SessionSummary;
 use crate::storage::SourceTally;
 
+// ---- Color policy ---------------------------------------------------------
+
+/// Honor the community `NO_COLOR` convention (<https://no-color.org>).
+///
+/// Present *and non-empty* → suppress every foreground / background color.
+/// `Modifier::BOLD` and friends are untouched; they carry meaning on
+/// monochrome terminals too (and the convention explicitly allows bold /
+/// inverse). Queried per-call rather than cached so tests can toggle the
+/// env var between scenarios without an OnceLock reset dance.
+fn no_color() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+}
+
+/// Extension methods that route `.fg` / `.bg` through the NO_COLOR gate.
+///
+/// The motivation is ergonomic: using `style.maybe_fg(Color::X)` keeps the
+/// existing builder-style composition readable, versus sprinkling
+/// `if !no_color() { ... }` around every table definition.
+trait StyleExt {
+    fn maybe_fg(self, c: Color) -> Self;
+    fn maybe_bg(self, c: Color) -> Self;
+}
+
+impl StyleExt for Style {
+    fn maybe_fg(self, c: Color) -> Self {
+        if no_color() { self } else { self.fg(c) }
+    }
+    fn maybe_bg(self, c: Color) -> Self {
+        if no_color() { self } else { self.bg(c) }
+    }
+}
+
 // ---- Public entry ---------------------------------------------------------
 
 /// Render the whole frame. Pure w.r.t. `app` — we only *read* state.
@@ -69,11 +101,11 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, app: &App) {
         let label = format!(" {} {} ", idx + 1, v.title());
         let style = if *v == app.view {
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .maybe_fg(Color::Black)
+                .maybe_bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Gray)
+            Style::default().maybe_fg(Color::Gray)
         };
         spans.push(Span::styled(label, style));
     }
@@ -87,9 +119,9 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let hints = "q/Esc quit  1/2/3 view  j/k move  g/G top/bottom  Enter drill-in  r refresh";
     let msg = app.footer.as_deref().unwrap_or("");
     let line = Line::from(vec![
-        Span::styled(hints, Style::default().fg(Color::DarkGray)),
+        Span::styled(hints, Style::default().maybe_fg(Color::DarkGray)),
         Span::raw("  "),
-        Span::styled(msg, Style::default().fg(Color::Yellow)),
+        Span::styled(msg, Style::default().maybe_fg(Color::Yellow)),
     ]);
     frame.render_widget(Paragraph::new(line).alignment(Alignment::Left), area);
 }
@@ -124,7 +156,7 @@ fn draw_overview(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .block(Block::default().borders(Borders::ALL).title(" Overview "))
         .row_highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .maybe_bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -178,7 +210,7 @@ fn draw_sessions(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .block(Block::default().borders(Borders::ALL).title(" Sessions "))
         .row_highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .maybe_bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -249,7 +281,7 @@ fn draw_models(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .block(Block::default().borders(Borders::ALL).title(" Models "))
         .row_highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .maybe_bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -308,7 +340,7 @@ fn draw_trend_sparkline(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) 
     let spark = Sparkline::default()
         .block(Block::default().borders(Borders::ALL).title(title))
         .data(&data)
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().maybe_fg(Color::Cyan));
 
     frame.render_widget(spark, area);
 }
