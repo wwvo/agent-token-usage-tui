@@ -102,11 +102,7 @@ fn tmpfile_with_lines(lines: &[&str]) -> NamedTempFile {
 
 #[test]
 fn read_jsonl_parses_all_lines_from_zero_offset() {
-    let f = tmpfile_with_lines(&[
-        r#"{"a": 1}"#,
-        r#"{"b": 2}"#,
-        r#"{"c": 3}"#,
-    ]);
+    let f = tmpfile_with_lines(&[r#"{"a": 1}"#, r#"{"b": 2}"#, r#"{"c": 3}"#]);
     let rows: Vec<_> = read_jsonl_from_offset(f.path(), 0)
         .expect("open")
         .collect::<Result<Vec<_>, _>>()
@@ -131,14 +127,13 @@ fn read_jsonl_skips_blank_lines() {
 #[test]
 fn read_jsonl_resumes_from_offset_correctly() {
     // "{"a":1}\n" is 8 bytes; starting from offset 8 yields lines 2–3.
-    let f = tmpfile_with_lines(&[
-        r#"{"a":1}"#,
-        r#"{"b":2}"#,
-        r#"{"c":3}"#,
-    ]);
+    let f = tmpfile_with_lines(&[r#"{"a":1}"#, r#"{"b":2}"#, r#"{"c":3}"#]);
 
     let first_line_len = std::fs::metadata(f.path()).expect("meta").len();
-    assert!(first_line_len >= 24, "fixture should have at least 3 lines worth");
+    assert!(
+        first_line_len >= 24,
+        "fixture should have at least 3 lines worth"
+    );
 
     let rows: Vec<_> = read_jsonl_from_offset(f.path(), 8)
         .expect("open")
@@ -152,11 +147,7 @@ fn read_jsonl_resumes_from_offset_correctly() {
 
 #[test]
 fn read_jsonl_returns_per_line_parse_errors_not_aborts() {
-    let f = tmpfile_with_lines(&[
-        r#"{"ok": 1}"#,
-        r#"{not valid json"#,
-        r#"{"ok": 2}"#,
-    ]);
+    let f = tmpfile_with_lines(&[r#"{"ok": 1}"#, r#"{not valid json"#, r#"{"ok": 2}"#]);
 
     let rows: Vec<_> = read_jsonl_from_offset(f.path(), 0).expect("open").collect();
     assert_eq!(rows.len(), 3);

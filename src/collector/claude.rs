@@ -43,13 +43,21 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use chrono::DateTime;
+use chrono::Utc;
+use serde_json::Value;
 
 use crate::collector::Collector;
 use crate::collector::Reporter;
 use crate::collector::ScanProgress;
 use crate::collector::ScanSummary;
+use crate::collector::util;
+use crate::domain::PromptEvent;
+use crate::domain::SessionRecord;
 use crate::domain::Source;
+use crate::domain::UsageRecord;
 use crate::storage::Db;
+use crate::storage::FileScanContext;
 
 /// Collector for `~/.claude/projects/**/*.jsonl`.
 pub struct ClaudeCollector {
@@ -140,9 +148,7 @@ impl Collector for ClaudeCollector {
                             error = %e,
                             "claude: failed to process file; continuing"
                         );
-                        summary
-                            .errors
-                            .push(format!("{}: {}", path.display(), e));
+                        summary.errors.push(format!("{}: {}", path.display(), e));
                     }
                 }
             }
@@ -190,7 +196,7 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
-/// Per-file counters returned by [`process_file`]. Filled in by M3 C3b.
+/// Per-file counters returned by [`process_file`].
 #[derive(Default)]
 struct FileStats {
     records_inserted: usize,
@@ -198,15 +204,53 @@ struct FileStats {
     sessions_touched: usize,
 }
 
-/// Process a single Claude JSONL file: read the tail, parse, insert.
+/// Accumulated session-level fields while we walk a file.
 ///
-/// M3 C3a only wires the `file_state` checkpoint so repeated scans don't
-/// re-read the same bytes. The actual message parsing + inserts arrive in
-/// M3 C3b and will flesh out `FileStats`.
+/// Claude repeats session metadata on every line, so we just keep the latest
+/// non-empty values we've seen.
+#[derive(Default)]
+struct SessionMeta {
+    session_id: Option<String>,
+    cwd: Option<String>,
+    version: Option<String>,
+    git_branch: Option<String>,
+    first_ts: Option<DateTime<Utc>>,
+}
+
+impl SessionMeta {
+    fn observe_envelope(&mut self, env: &Value, ts: Option<DateTime<Utc>>) {
+        if let Some(s) = env.get("sessionId").and_then(Value::as_str) {
+            if !s.is_empty() {
+                self.session_id = Some(s.to_owned());
+            }
+        }
+        if let Some(s) = env.get("cwd").and_then(Value::as_str) {
+            if !s.is_empty() {
+                self.cwd = Some(s.to_owned());
+            }
+        }
+        if let Some(s) = env.get("version").and_then(Value::as_str) {
+            if !s.is_empty() {
+                self.version = Some(s.to_owned());
+            }
+        }
+        if let Some(s) = env.get("gitBranch").and_then(Value::as_str) {
+            if !s.is_empty() {
+                self.git_branch = Some(s.to_owned());
+            }
+        }
+        if let Some(t) = ts {
+            self.first_ts = Some(self.first_ts.map_or(t, |existing| existing.min(t)));
+        }
+    }
+}
+
+/// Process a single Claude JSONL file: read the tail, parse, insert, upsert.
 async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
-    let (prev_size, prev_offset, prev_ctx) = db.get_file_state(path)?;
+    let (prev_size, prev_offset, _prev_ctx) = db.get_file_state(path)?;
     let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
-    let current_size = metadata.len() as i64;
+    let current_size = i64::try_from(metadata.len())
+        .with_context(|| format!("file too large for i64 offset: {}", path.display()))?;
 
     // File shrank or was replaced: restart from 0 (Claude doesn't truncate
     // sessions in practice, but be defensive).
@@ -217,16 +261,173 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
     };
 
     if current_size == resume_offset {
-        // Nothing new; keep the checkpoint as-is.
         return Ok(FileStats::default());
     }
 
-    // M3 C3b plugs parsing + DB writes in here. For now we only advance the
-    // offset so a second scan doesn't re-examine the same bytes — this keeps
-    // the skeleton end-to-end correct even before messages turn into DB rows.
-    db.set_file_state(path, current_size, current_size, prev_ctx.as_ref())?;
+    // Derive project from the parent directory name and a session fallback
+    // from the file stem. Both are used only when the envelope doesn't carry
+    // explicit values.
+    let project = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_owned();
+    let fallback_session_id = path
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_owned();
 
-    Ok(FileStats::default())
+    let mut records: Vec<UsageRecord> = Vec::new();
+    let mut prompts: Vec<PromptEvent> = Vec::new();
+    let mut meta = SessionMeta::default();
+
+    let resume_u64 = u64::try_from(resume_offset)
+        .with_context(|| format!("negative offset {resume_offset} for {}", path.display()))?;
+
+    for line_result in util::read_jsonl_from_offset(path, resume_u64)? {
+        let value = match line_result {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "claude: skipping malformed JSONL line"
+                );
+                continue;
+            }
+        };
+        parse_envelope(&value, &mut records, &mut prompts, &mut meta);
+    }
+
+    // Resolve session id used by both the SessionRecord and the FileScanContext.
+    let session_id = meta
+        .session_id
+        .clone()
+        .unwrap_or_else(|| fallback_session_id.clone());
+
+    // Patch in the resolved session id for any records / prompts that couldn't
+    // read it from their own envelope.
+    for r in &mut records {
+        if r.session_id.is_empty() {
+            r.session_id.clone_from(&session_id);
+        }
+        if r.project.is_empty() {
+            r.project.clone_from(&project);
+        }
+    }
+    for p in &mut prompts {
+        if p.session_id.is_empty() {
+            p.session_id.clone_from(&session_id);
+        }
+    }
+
+    let records_inserted = db.insert_usage_batch(&records)?;
+    let prompts_inserted = db.insert_prompt_batch(&prompts)?;
+
+    let sessions_touched = if records.is_empty() && prompts.is_empty() {
+        0
+    } else {
+        let session_record = SessionRecord {
+            source: Source::Claude,
+            session_id: session_id.clone(),
+            project: project.clone(),
+            cwd: meta.cwd.clone().unwrap_or_default(),
+            version: meta.version.clone().unwrap_or_default(),
+            git_branch: meta.git_branch.clone().unwrap_or_default(),
+            start_time: meta.first_ts.unwrap_or_else(Utc::now),
+            prompts: i64::try_from(prompts.len()).unwrap_or(i64::MAX),
+        };
+        db.upsert_session(&session_record)?;
+        1
+    };
+
+    let new_ctx = FileScanContext {
+        session_id,
+        cwd: meta.cwd.unwrap_or_default(),
+        version: meta.version.unwrap_or_default(),
+        model: String::new(), // Claude models are attached per-turn, not per-session.
+    };
+    db.set_file_state(path, current_size, current_size, Some(&new_ctx))?;
+
+    Ok(FileStats {
+        records_inserted,
+        prompts_inserted,
+        sessions_touched,
+    })
+}
+
+/// Parse one envelope line, pushing zero or one record/prompt into the
+/// accumulators and keeping session metadata current.
+fn parse_envelope(
+    env: &Value,
+    records: &mut Vec<UsageRecord>,
+    prompts: &mut Vec<PromptEvent>,
+    meta: &mut SessionMeta,
+) {
+    let ts = env
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&Utc));
+
+    meta.observe_envelope(env, ts);
+
+    let Some(kind) = env.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(message) = env.get("message") else {
+        return;
+    };
+
+    match kind {
+        "user" => {
+            if util::is_real_user_prompt(message) {
+                let Some(ts) = ts else { return };
+                prompts.push(PromptEvent {
+                    source: Source::Claude,
+                    session_id: String::new(), // filled later from meta/fallback
+                    timestamp: ts,
+                });
+            }
+        }
+        "assistant" => {
+            let Some(model) = message.get("model").and_then(Value::as_str) else {
+                return;
+            };
+            if model == "<synthetic>" {
+                return;
+            }
+            let Some(usage) = message.get("usage") else {
+                return; // streaming chunk w/o usage — skip
+            };
+            let Some(ts) = ts else { return };
+
+            let get_i64 =
+                |key: &str| -> i64 { usage.get(key).and_then(Value::as_i64).unwrap_or(0) };
+
+            records.push(UsageRecord {
+                source: Source::Claude,
+                session_id: String::new(), // filled later
+                model: model.to_owned(),
+                input_tokens: get_i64("input_tokens"),
+                output_tokens: get_i64("output_tokens"),
+                cache_creation_input_tokens: get_i64("cache_creation_input_tokens"),
+                cache_read_input_tokens: get_i64("cache_read_input_tokens"),
+                reasoning_output_tokens: 0, // Claude has no separate reasoning channel
+                cost_usd: 0.0,              // filled by recalc_costs
+                timestamp: ts,
+                project: String::new(), // filled later
+                git_branch: env
+                    .get("gitBranch")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            });
+        }
+        _ => { /* unknown envelope type; ignore silently */ }
+    }
 }
 
 #[cfg(test)]
