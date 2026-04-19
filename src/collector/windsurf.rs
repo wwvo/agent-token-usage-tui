@@ -64,6 +64,7 @@ use crate::collector::util;
 use crate::domain::SessionRecord;
 use crate::domain::Source;
 use crate::domain::UsageRecord;
+use crate::domain::WindsurfSessionRecord;
 use crate::storage::Db;
 use crate::storage::FileScanContext;
 
@@ -210,11 +211,19 @@ struct FileStats {
 /// We only need `session_id` / `workspace` / `last_model` to survive a
 /// resume — the timestamps are re-derived from the new lines we're about
 /// to ingest on this pass.
+///
+/// `summary` is the Cascade's human-readable title from `session_meta`.
+/// We don't round-trip it through `FileScanContext` (no slot for it there
+/// today) — this is fine because the `windsurf_sessions` upsert semantics
+/// treat empty-string inputs as "keep old value", so a resume that didn't
+/// re-read the first line leaves the existing row untouched.
 #[derive(Default)]
 struct WindsurfState {
     session_id: String,
     workspace: String,
     last_model: String,
+    /// Cascade's human-readable title, read off `session_meta.summary`.
+    summary: String,
     /// The `created_time` from `session_meta`, parsed once when we see it.
     /// Takes precedence over `first_ts` for the session row's `start_time`.
     created_time: Option<DateTime<Utc>>,
@@ -231,6 +240,10 @@ impl WindsurfState {
             // have a dedicated slot and we already store the URI there.
             workspace: c.cwd.clone(),
             last_model: c.model.clone(),
+            // `FileScanContext` has no summary slot; we intentionally
+            // leave it empty on resume and rely on upsert's "empty
+            // preserves old value" semantics to not clobber the row.
+            summary: String::new(),
             created_time: None,
             first_ts: None,
         })
@@ -306,7 +319,9 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
     // line (non-empty session id plus at least one state field). Empty
     // files that contained neither leave sessions_touched = 0.
     let has_meta = !state.session_id.is_empty()
-        && (state.created_time.is_some() || !state.last_model.is_empty());
+        && (state.created_time.is_some()
+            || !state.last_model.is_empty()
+            || !state.summary.is_empty());
     let sessions_touched = if records.is_empty() && !has_meta {
         0
     } else {
@@ -327,6 +342,28 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
             // double-count against the usage records. We leave prompts at 0.
             prompts: 0,
         })?;
+
+        // Mirror the cascade's Windsurf-specific presentation fields
+        // (summary / workspace / last_model / created_time) into the
+        // dedicated `windsurf_sessions` table so the per-cascade TUI
+        // drill-down view can read them without re-parsing the JSONL.
+        // Gated on `has_meta` so an orphan file (turn_usage without a
+        // preceding session_meta, e.g. a crashed exporter) doesn't
+        // produce a blank row that would look broken in the drill-down
+        // view; `last_seen = now` is the upsert's max-wins signal —
+        // even when `state.first_ts` is older (because this scan only
+        // saw old rows) we still want to record that we *observed* the
+        // cascade on this pass.
+        if has_meta {
+            db.upsert_windsurf_session(&WindsurfSessionRecord {
+                cascade_id: state.session_id.clone(),
+                summary: state.summary.clone(),
+                workspace: state.workspace.clone(),
+                last_model: state.last_model.clone(),
+                created_time: state.created_time,
+                last_seen: Utc::now(),
+            })?;
+        }
         1
     };
 
@@ -368,6 +405,11 @@ fn parse_entry(entry: &Value, records: &mut Vec<UsageRecord>, state: &mut Windsu
             if let Some(model) = entry.get("last_model").and_then(Value::as_str) {
                 if !model.is_empty() {
                     state.last_model = model.to_owned();
+                }
+            }
+            if let Some(title) = entry.get("summary").and_then(Value::as_str) {
+                if !title.is_empty() {
+                    state.summary = title.to_owned();
                 }
             }
             if let Some(ct) = entry.get("created_time").and_then(Value::as_str) {

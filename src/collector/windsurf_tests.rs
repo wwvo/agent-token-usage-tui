@@ -379,6 +379,140 @@ async fn turn_without_timestamp_is_dropped() {
     assert_eq!(s.records_inserted, 1);
 }
 
+// ---- windsurf_sessions metadata landing ----------------------------------
+
+#[tokio::test]
+async fn scan_persists_session_meta_into_windsurf_sessions() {
+    // First-pass contract: the collector must upsert the cascade's
+    // presentation fields (summary / workspace / last_model /
+    // created_time) into `windsurf_sessions` so the per-cascade TUI
+    // drill-down view can read them without re-parsing the JSONL.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir sessions");
+
+    let file = sessions_dir.join("cascade-a.jsonl");
+    append_jsonl(
+        &file,
+        &session_meta(
+            "cascade-a",
+            "2026-04-19T10:00:00Z",
+            "Generating commit message",
+            "gpt-5-codex",
+            "file:///home/alice/code/a",
+        ),
+    );
+    append_jsonl(
+        &file,
+        &turn_usage("step-1", "2026-04-19T10:01:00Z", "gpt-5-codex", 100, 50, 10),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    c.scan(&db, &NoopReporter).await.expect("scan");
+
+    let rows = db
+        .fetch_windsurf_sessions_summary(10)
+        .expect("fetch summary");
+    assert_eq!(rows.len(), 1);
+    let r = &rows[0];
+    assert_eq!(r.cascade_id, "cascade-a");
+    assert_eq!(r.summary, "Generating commit message");
+    assert_eq!(r.workspace, "file:///home/alice/code/a");
+    assert_eq!(r.last_model, "gpt-5-codex");
+    assert!(r.created_time.is_some(), "created_time must be populated");
+    // Aggregate counters flow through the JOIN against usage_records.
+    assert_eq!(r.turns, 1);
+    assert_eq!(r.total_tokens, 100 + 50 + 10);
+}
+
+#[tokio::test]
+async fn resume_after_append_preserves_summary_via_empty_upsert() {
+    // Resume path: the second scan replays from `resume_offset` and
+    // never re-sees the file's first `session_meta` line. Because
+    // WindsurfState::from_context has no summary slot, `state.summary`
+    // is empty on this pass — which must NOT wipe out the row's title
+    // thanks to the upsert's "empty preserves old value" rule.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir sessions");
+
+    let file = sessions_dir.join("cascade-a.jsonl");
+    append_jsonl(
+        &file,
+        &session_meta(
+            "cascade-a",
+            "2026-04-19T10:00:00Z",
+            "stable title",
+            "gpt-5-codex",
+            "file:///home/alice/code/a",
+        ),
+    );
+    append_jsonl(
+        &file,
+        &turn_usage("step-1", "2026-04-19T10:01:00Z", "gpt-5-codex", 100, 50, 10),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    let _ = c.scan(&db, &NoopReporter).await.expect("first");
+
+    // Append a new turn; the next scan resumes past the session_meta.
+    append_jsonl(
+        &file,
+        &turn_usage("step-2", "2026-04-19T10:02:00Z", "gpt-5-codex", 200, 80, 20),
+    );
+    let _ = c.scan(&db, &NoopReporter).await.expect("second");
+
+    let rows = db.fetch_windsurf_sessions_summary(10).expect("fetch");
+    assert_eq!(rows.len(), 1);
+    let r = &rows[0];
+    assert_eq!(r.summary, "stable title", "resume must not wipe summary");
+    assert_eq!(r.turns, 2, "aggregate counts accumulate");
+    assert_eq!(r.total_tokens, 100 + 50 + 10 + 200 + 80 + 20);
+}
+
+#[tokio::test]
+async fn scan_without_session_meta_skips_windsurf_sessions_row() {
+    // Edge case: exporter crashed before flushing the first
+    // `session_meta` line. Such files still carry `turn_usage` rows
+    // that we ingest into `usage_records` under a file-stem-derived
+    // session_id, but we must NOT synthesize a `windsurf_sessions` row
+    // with empty summary/workspace/last_model — that's presentation
+    // junk from the TUI's point of view.
+    //
+    // With `has_meta` requiring at least one of created_time /
+    // last_model / summary to be non-empty, this branch short-circuits.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir sessions");
+
+    let file = sessions_dir.join("orphan.jsonl");
+    append_jsonl(
+        &file,
+        &turn_usage("step-1", "2026-04-19T10:01:00Z", "gpt-5-codex", 100, 50, 10),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    c.scan(&db, &NoopReporter).await.expect("scan");
+
+    // usage_records got the row (under file-stem session_id).
+    let sessions = db
+        .fetch_recent_sessions(Some(Source::Windsurf), 10)
+        .unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "orphan");
+
+    // But windsurf_sessions stays empty: we have nothing presentation-
+    // worthy to show yet.
+    let meta = db.fetch_windsurf_sessions_summary(10).expect("fetch");
+    assert!(
+        meta.is_empty(),
+        "orphan cascade must not create a windsurf_sessions row; got {meta:?}",
+    );
+}
+
 #[tokio::test]
 async fn turn_missing_model_falls_back_to_session_meta_model() {
     // If a turn_usage row has an empty `model`, the parser should use the
