@@ -64,6 +64,7 @@ use crate::collector::util;
 use crate::domain::SessionRecord;
 use crate::domain::Source;
 use crate::domain::UsageRecord;
+use crate::domain::WindsurfCostDiff;
 use crate::domain::WindsurfSessionRecord;
 use crate::storage::Db;
 use crate::storage::FileScanContext;
@@ -278,6 +279,7 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
     };
 
     let mut records: Vec<UsageRecord> = Vec::new();
+    let mut cost_diffs: Vec<WindsurfCostDiff> = Vec::new();
 
     let resume_u64 = u64::try_from(resume_offset)
         .with_context(|| format!("negative offset {resume_offset} for {}", path.display()))?;
@@ -294,7 +296,7 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
                 continue;
             }
         };
-        parse_entry(&value, &mut records, &mut state);
+        parse_entry(&value, &mut records, &mut cost_diffs, &mut state);
     }
 
     // Fallback session id: derive from the file stem when the file has
@@ -312,8 +314,28 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
             r.session_id.clone_from(&state.session_id);
         }
     }
+    // Same patch for cost_diffs: a `checkpoint_cost` line doesn't carry
+    // cascade_id on the wire (the file-per-cascade layout makes it
+    // redundant), so parse_entry leaves the field empty and we fill it
+    // here with the post-fallback session_id.
+    for c in &mut cost_diffs {
+        if c.cascade_id.is_empty() {
+            c.cascade_id.clone_from(&state.session_id);
+        }
+    }
 
     let records_inserted = db.insert_usage_batch(&records)?;
+    // Fire-and-forget: we log the count for observability but it's not
+    // part of `FileStats` — cost diffs are a cross-check side channel,
+    // not part of the user-facing scan summary.
+    let cost_diffs_inserted = db.insert_windsurf_cost_diff_batch(&cost_diffs)?;
+    if cost_diffs_inserted > 0 {
+        tracing::debug!(
+            path = %path.display(),
+            inserted = cost_diffs_inserted,
+            "windsurf: ingested checkpoint cost diffs",
+        );
+    }
 
     // Upsert session whenever we have any usage rows or a `session_meta`
     // line (non-empty session id plus at least one state field). Empty
@@ -385,7 +407,12 @@ async fn process_file(db: &Db, path: &Path) -> Result<FileStats> {
     })
 }
 
-fn parse_entry(entry: &Value, records: &mut Vec<UsageRecord>, state: &mut WindsurfState) {
+fn parse_entry(
+    entry: &Value,
+    records: &mut Vec<UsageRecord>,
+    cost_diffs: &mut Vec<WindsurfCostDiff>,
+    state: &mut WindsurfState,
+) {
     let Some(kind) = entry.get("type").and_then(Value::as_str) else {
         return;
     };
@@ -457,6 +484,56 @@ fn parse_entry(entry: &Value, records: &mut Vec<UsageRecord>, state: &mut Windsu
                 timestamp: ts,
                 project: state.workspace.clone(),
                 git_branch: String::new(),
+            });
+        }
+        "checkpoint_cost" => {
+            // See tools/windsurf-exporter/src/writer.ts::CheckpointCostLine
+            // for the wire contract. Fields we need to treat as hard
+            // requirements (drop the row if any is missing):
+            //   * step_id — dedup key in the storage PK
+            //   * timestamp — sortable + trend axis
+            //   * server_cost_usd — the whole reason this row exists
+            //
+            // model / server_* token counts are optional: absent fields
+            // land as empty string / zero, which matches the collector's
+            // policy for `turn_usage` rows.
+            let Some(step_id) = entry.get("step_id").and_then(Value::as_str) else {
+                return;
+            };
+            if step_id.is_empty() {
+                return;
+            }
+            let Some(ts_str) = entry.get("timestamp").and_then(Value::as_str) else {
+                return;
+            };
+            let Ok(ts_fixed) = DateTime::parse_from_rfc3339(ts_str) else {
+                return;
+            };
+            let ts = ts_fixed.with_timezone(&Utc);
+
+            let Some(cost) = entry.get("server_cost_usd").and_then(Value::as_f64) else {
+                return;
+            };
+            if !cost.is_finite() {
+                return;
+            }
+
+            let model = entry
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| state.last_model.clone(), str::to_owned);
+
+            let get = |key: &str| -> i64 { entry.get(key).and_then(Value::as_i64).unwrap_or(0) };
+            cost_diffs.push(WindsurfCostDiff {
+                step_id: step_id.to_owned(),
+                cascade_id: String::new(), // patched later from state.session_id
+                timestamp: ts,
+                model,
+                server_cost_usd: cost,
+                server_input_tokens: get("server_input_tokens"),
+                server_output_tokens: get("server_output_tokens"),
+                server_cache_read_tokens: get("server_cache_read_tokens"),
             });
         }
         _ => { /* unknown entry; ignore */ }

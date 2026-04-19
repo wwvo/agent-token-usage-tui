@@ -26,6 +26,7 @@ pub mod file_state;
 pub mod pricing;
 pub mod records;
 pub mod schema;
+pub mod windsurf_cost_diffs;
 pub mod windsurf_sessions;
 
 pub use file_state::FileScanContext;

@@ -9,6 +9,7 @@ mod prompt;
 mod record;
 mod session;
 mod source;
+mod windsurf_cost_diff;
 mod windsurf_session;
 
 pub use price::ModelPrice;
@@ -17,4 +18,5 @@ pub use record::UsageRecord;
 pub use session::SessionRecord;
 pub use source::Source;
 pub use source::UnknownSource;
+pub use windsurf_cost_diff::WindsurfCostDiff;
 pub use windsurf_session::WindsurfSessionRecord;

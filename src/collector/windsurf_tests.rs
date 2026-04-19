@@ -513,6 +513,179 @@ async fn scan_without_session_meta_skips_windsurf_sessions_row() {
     );
 }
 
+// ---- checkpoint_cost ingestion -------------------------------------------
+
+fn checkpoint_cost(
+    step_id: &str,
+    timestamp: &str,
+    model: &str,
+    cost: f64,
+    input: i64,
+    output: i64,
+    cache_read: i64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "checkpoint_cost",
+        "step_id": step_id,
+        "timestamp": timestamp,
+        "model": model,
+        "server_cost_usd": cost,
+        "server_input_tokens": input,
+        "server_output_tokens": output,
+        "server_cache_read_tokens": cache_read,
+    })
+}
+
+#[tokio::test]
+async fn checkpoint_cost_lines_land_in_windsurf_cost_diffs_table() {
+    // End-to-end: a JSONL file with `session_meta` + a few `turn_usage`
+    // rows + a `checkpoint_cost` row should land the cost row in the
+    // new table while the turn rows continue to flow into usage_records.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir");
+    let file = sessions_dir.join("cascade-a.jsonl");
+
+    append_jsonl(
+        &file,
+        &session_meta(
+            "cascade-a",
+            "2026-04-19T10:00:00Z",
+            "title",
+            "gpt-5-codex",
+            "file:///home/u/proj",
+        ),
+    );
+    append_jsonl(
+        &file,
+        &turn_usage("step-1", "2026-04-19T10:01:00Z", "gpt-5-codex", 100, 50, 10),
+    );
+    append_jsonl(
+        &file,
+        &checkpoint_cost(
+            "ck-1",
+            "2026-04-19T10:01:05Z",
+            "gpt-5-codex",
+            0.2468,
+            100,
+            50,
+            10,
+        ),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    c.scan(&db, &NoopReporter).await.expect("scan");
+
+    let diffs = db
+        .fetch_recent_windsurf_cost_diffs(10)
+        .expect("fetch diffs");
+    assert_eq!(diffs.len(), 1);
+    let d = &diffs[0];
+    assert_eq!(d.step_id, "ck-1");
+    // cascade_id gets back-filled from the session_meta's cascade_id.
+    assert_eq!(d.cascade_id, "cascade-a");
+    assert_eq!(d.model, "gpt-5-codex");
+    assert!((d.server_cost_usd - 0.2468).abs() < 1e-9);
+    assert_eq!(d.server_input_tokens, 100);
+    assert_eq!(d.server_output_tokens, 50);
+    assert_eq!(d.server_cache_read_tokens, 10);
+}
+
+#[tokio::test]
+async fn rescanning_checkpoint_cost_rows_dedupes_on_step_id_pk() {
+    // The collector writes via INSERT OR IGNORE so a repeat scan of
+    // the same file must not produce duplicate rows in the diffs table.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir");
+    let file = sessions_dir.join("cascade-a.jsonl");
+
+    append_jsonl(
+        &file,
+        &session_meta(
+            "cascade-a",
+            "2026-04-19T10:00:00Z",
+            "t",
+            "m",
+            "file:///home/u",
+        ),
+    );
+    append_jsonl(
+        &file,
+        &checkpoint_cost("ck-1", "2026-04-19T10:00:05Z", "m", 0.1, 1, 2, 3),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    c.scan(&db, &NoopReporter).await.expect("first");
+    c.scan(&db, &NoopReporter).await.expect("second");
+
+    let diffs = db.fetch_recent_windsurf_cost_diffs(10).expect("fetch");
+    assert_eq!(diffs.len(), 1, "rescan must not double the row count");
+}
+
+#[tokio::test]
+async fn checkpoint_cost_with_missing_required_fields_is_dropped() {
+    // Three malformed rows + one good row: only the good row survives.
+    // Each skip path is silent (no panic, no errors reported), matching
+    // the collector's general "best-effort per-line" policy.
+    let tmp = tempdir().expect("tempdir");
+    let sessions_dir = tmp.path().join("windsurf-sessions");
+    fs::create_dir_all(&sessions_dir).expect("mkdir");
+    let file = sessions_dir.join("cascade-a.jsonl");
+
+    append_jsonl(
+        &file,
+        &session_meta(
+            "cascade-a",
+            "2026-04-19T10:00:00Z",
+            "t",
+            "m",
+            "file:///home/u",
+        ),
+    );
+    // Missing step_id.
+    append_jsonl(
+        &file,
+        &serde_json::json!({
+            "type": "checkpoint_cost",
+            "timestamp": "2026-04-19T10:00:01Z",
+            "server_cost_usd": 0.1,
+        }),
+    );
+    // Bad timestamp.
+    append_jsonl(
+        &file,
+        &checkpoint_cost("bad-ts", "not-a-date", "m", 0.1, 1, 2, 3),
+    );
+    // Missing cost.
+    append_jsonl(
+        &file,
+        &serde_json::json!({
+            "type": "checkpoint_cost",
+            "step_id": "no-cost",
+            "timestamp": "2026-04-19T10:00:02Z",
+        }),
+    );
+    // Good row.
+    append_jsonl(
+        &file,
+        &checkpoint_cost("good", "2026-04-19T10:00:03Z", "m", 0.1, 1, 2, 3),
+    );
+
+    let db = Db::open(&tmp.path().join("t.db")).expect("open");
+    let c = WindsurfCollector::new(vec![sessions_dir]);
+    let s = c.scan(&db, &NoopReporter).await.expect("scan");
+    // Malformed checkpoint rows are per-line drops; no entry in
+    // `summary.errors` (that channel is reserved for per-file failures).
+    assert!(s.errors.is_empty(), "errors: {:?}", s.errors);
+
+    let diffs = db.fetch_recent_windsurf_cost_diffs(10).expect("fetch");
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].step_id, "good");
+}
+
 #[tokio::test]
 async fn turn_missing_model_falls_back_to_session_meta_model() {
     // If a turn_usage row has an empty `model`, the parser should use the
