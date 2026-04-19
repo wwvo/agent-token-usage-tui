@@ -22,6 +22,7 @@ pub mod openclaw;
 pub mod opencode;
 pub mod reporter;
 pub mod util;
+pub mod windsurf;
 
 pub use claude::ClaudeCollector;
 pub use codex::CodexCollector;
@@ -31,6 +32,7 @@ pub use reporter::ChannelReporter;
 pub use reporter::NoopReporter;
 pub use reporter::Reporter;
 pub use reporter::ScanProgress;
+pub use windsurf::WindsurfCollector;
 
 use anyhow::Result;
 
