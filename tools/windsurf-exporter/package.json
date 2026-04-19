@@ -2,14 +2,24 @@
   "name": "agent-token-usage-tui-windsurf-exporter",
   "displayName": "Agent Token Usage (Windsurf Exporter)",
   "description": "Thin companion extension for `agent-token-usage-tui`: polls Windsurf Cascade trajectories and writes them to JSONL files on disk so the Rust TUI can ingest them.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "agent-token-usage-tui",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "keywords": ["windsurf", "cascade", "token usage", "agent", "exporter"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "windsurf",
+    "cascade",
+    "token usage",
+    "agent",
+    "exporter"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
