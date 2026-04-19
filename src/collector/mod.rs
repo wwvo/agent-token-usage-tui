@@ -19,12 +19,14 @@
 pub mod claude;
 pub mod codex;
 pub mod openclaw;
+pub mod opencode;
 pub mod reporter;
 pub mod util;
 
 pub use claude::ClaudeCollector;
 pub use codex::CodexCollector;
 pub use openclaw::OpenClawCollector;
+pub use opencode::OpenCodeCollector;
 pub use reporter::ChannelReporter;
 pub use reporter::NoopReporter;
 pub use reporter::Reporter;
