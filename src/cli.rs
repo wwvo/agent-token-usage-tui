@@ -18,9 +18,9 @@ use clap::Subcommand;
 use crate::app_dir;
 use crate::collector::NoopReporter;
 use crate::collector::ScanSummary;
+use crate::config::Config;
 use crate::logging;
 use crate::logging::LogMode;
-use crate::pipeline::PipelineConfig;
 use crate::pipeline::run_scan as pipeline_run_scan;
 use crate::pricing::PricingSyncOutcome;
 use crate::pricing::cost::calc_cost;
@@ -144,8 +144,14 @@ fn run_tui(cli: &Cli) -> Result<()> {
             }
         }
         if !cli.no_scan {
-            let config = PipelineConfig::default();
-            match pipeline_run_scan(&db, &NoopReporter, &config).await {
+            let pipeline_cfg = match load_pipeline_config(cli.data_dir.as_deref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(error = %e, "config load failed; falling back to defaults");
+                    crate::pipeline::PipelineConfig::default()
+                }
+            };
+            match pipeline_run_scan(&db, &NoopReporter, &pipeline_cfg).await {
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, "scan pipeline failed; continuing with existing DB");
@@ -192,16 +198,34 @@ fn run_scan(data_dir: Option<&Path>) -> Result<()> {
         .build()
         .context("build tokio runtime for scan")?;
 
-    // TODO(M6 C2): populate from parsed config.toml. Until then OpenClaw /
-    // OpenCode / Windsurf have no data to ingest — that's fine; the pipeline
-    // treats empty base lists as "collector finds nothing".
-    let config = PipelineConfig::default();
+    let pipeline_cfg = load_pipeline_config(data_dir)?;
 
     let report = rt
-        .block_on(pipeline_run_scan(&db, &NoopReporter, &config))
+        .block_on(pipeline_run_scan(&db, &NoopReporter, &pipeline_cfg))
         .context("run scan pipeline")?;
 
     print_scan_summary(&report.summaries, report.costs_recalculated)
+}
+
+/// Resolve the `config.toml` path, honoring `--data-dir`.
+///
+/// When `--data-dir` is given we look for `config.toml` inside it; otherwise
+/// we land on the portable `<exe-dir>/config.toml`. Missing files are not
+/// errors; [`Config::load_or_default`] returns defaults transparently.
+fn resolve_config_path(data_dir: Option<&Path>) -> Result<PathBuf> {
+    if let Some(dir) = data_dir {
+        Ok(dir.join("config.toml"))
+    } else {
+        app_dir::config_path()
+    }
+}
+
+/// Load `config.toml` (or defaults) and project onto `PipelineConfig`.
+fn load_pipeline_config(data_dir: Option<&Path>) -> Result<crate::pipeline::PipelineConfig> {
+    let path = resolve_config_path(data_dir)?;
+    let cfg = Config::load_or_default(&path)
+        .with_context(|| format!("load config from {}", path.display()))?;
+    Ok(cfg.to_pipeline())
 }
 
 /// `atut sync-prices` — refresh the litellm pricing cache and re-price rows.
