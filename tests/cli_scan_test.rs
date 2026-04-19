@@ -84,3 +84,17 @@ fn scan_prints_help_entry_listing_subcommand() {
     assert!(output.status.success(), "--help should exit 0");
     assert!(stdout.contains("scan"), "--help missing scan subcommand");
 }
+
+#[test]
+fn version_subcommand_prints_name_commit_build_and_rust_lines() {
+    // Locks the release-reporting shape: users should get the SemVer on
+    // line 1, commit/build on line 2, rust MSRV on line 3.
+    let output = Command::new(BIN).arg("version").output().expect("spawn");
+    assert!(output.status.success(), "version should exit 0");
+
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("agent-token-usage-tui"), "missing package name");
+    assert!(stdout.contains("commit: "), "missing commit line");
+    assert!(stdout.contains("build: "), "missing build-date line");
+    assert!(stdout.contains("rust: "), "missing rust line");
+}

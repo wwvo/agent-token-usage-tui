@@ -34,6 +34,82 @@ fn main() {
 
     let path = Path::new(ASSET_PATH);
     ensure_fallback(path);
+
+    // Embed build metadata so `atut version` can show more than just the
+    // SemVer string. Both are best-effort: when git / system clock fail we
+    // emit empty strings rather than breaking the build.
+    emit_build_metadata();
+}
+
+/// Emit `ATUT_GIT_HASH` and `ATUT_BUILD_DATE` as `cargo:rustc-env` keys.
+///
+/// * `ATUT_GIT_HASH` = short SHA of `HEAD`, or `""` when git isn't available
+///   (e.g. building from a crates.io source tarball).
+/// * `ATUT_BUILD_DATE` = UTC date in `YYYY-MM-DD` form; uses the system
+///   clock, which is fine for a "best guess at build time" display field.
+fn emit_build_metadata() {
+    let git_hash = git_short_hash().unwrap_or_default();
+    println!("cargo:rustc-env=ATUT_GIT_HASH={git_hash}");
+
+    // Avoid pulling chrono into build deps just for a single YMD stamp —
+    // format manually from SystemTime.
+    let build_date = build_date_utc();
+    println!("cargo:rustc-env=ATUT_BUILD_DATE={build_date}");
+}
+
+fn git_short_hash() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short=9", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(out.stdout).ok()?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Format today's UTC date as `YYYY-MM-DD` using a tiny Zeller-free loop.
+fn build_date_utc() -> String {
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
+
+    let Ok(dur) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return String::from("unknown");
+    };
+    let mut days = (dur.as_secs() / 86_400) as i64;
+    let mut y = 1970_i64;
+    loop {
+        let leap = is_leap(y);
+        let year_days = if leap { 366 } else { 365 };
+        if days < year_days {
+            break;
+        }
+        days -= year_days;
+        y += 1;
+    }
+    let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m: i64 = 1;
+    for (idx, mdays) in months.iter().enumerate() {
+        let feb_bonus = if idx == 1 && is_leap(y) { 1 } else { 0 };
+        let total = *mdays + feb_bonus;
+        if days < total {
+            break;
+        }
+        days -= total;
+        m += 1;
+    }
+    let d = days + 1;
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 fn ensure_fallback(path: &Path) {

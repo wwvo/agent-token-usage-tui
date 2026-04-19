@@ -311,19 +311,41 @@ fn print_scan_summary(summaries: &[ScanSummary], costs_updated: usize) -> Result
     Ok(())
 }
 
-/// Write the short version line to stdout.
+/// Write the long-form version block to stdout.
 ///
-/// We use `writeln!` on an acquired `stdout` handle instead of `println!` so
-/// the workspace `clippy::print_stdout = "deny"` stays enforced — `println!`
-/// everywhere else in the code base is a bug.
+/// Output shape (example):
+///
+/// ```text
+/// agent-token-usage-tui 0.1.0
+/// commit: abcdef012  build: 2026-04-19
+/// rust:   1.85.0
+/// ```
+///
+/// `ATUT_GIT_HASH` and `ATUT_BUILD_DATE` are injected by `build.rs`. When
+/// either is unavailable (crates.io tarball, system clock broken) we
+/// substitute "unknown" rather than failing — a partial version string is
+/// still useful for bug reports.
 fn print_version() -> Result<()> {
-    // TODO(M7 C3): embed short git hash + build timestamp via build.rs envs.
     let mut out = std::io::stdout().lock();
     writeln!(
         out,
         "{} {}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
+    )?;
+
+    let git = option_env!("ATUT_GIT_HASH").unwrap_or("");
+    let date = option_env!("ATUT_BUILD_DATE").unwrap_or("");
+    let commit = if git.is_empty() { "unknown" } else { git };
+    let built = if date.is_empty() { "unknown" } else { date };
+    writeln!(out, "commit: {commit}  build: {built}")?;
+
+    // `rustc_version_runtime` would cost a dep; CARGO_PKG_RUST_VERSION is the
+    // MSRV declared in Cargo.toml, which is the more useful bug-report field.
+    writeln!(
+        out,
+        "rust:   {}",
+        option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"),
     )?;
     Ok(())
 }
