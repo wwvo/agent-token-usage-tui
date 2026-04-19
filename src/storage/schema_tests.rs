@@ -29,6 +29,7 @@ fn migrate_creates_all_expected_tables() {
         "prompt_events",
         "sessions",
         "usage_records",
+        "windsurf_cost_diffs",
         "windsurf_sessions",
     ] {
         assert!(
@@ -55,13 +56,40 @@ fn migrate_records_state_in_meta_table() {
     let conn = Connection::open_in_memory().expect("in-memory db");
     migrate(&conn).expect("migrate");
 
-    for id in ["migration_001_init", "migration_002_windsurf_sessions"] {
+    for id in [
+        "migration_001_init",
+        "migration_002_windsurf_sessions",
+        "migration_003_windsurf_cost_diffs",
+    ] {
         let value: String = conn
             .query_row("SELECT value FROM meta WHERE key = ?1", [id], |row| {
                 row.get(0)
             })
             .unwrap_or_else(|e| panic!("meta row for {id} must exist: {e}"));
         assert_eq!(value, "done", "{id} must be marked done");
+    }
+}
+
+#[test]
+fn migrate_creates_windsurf_cost_diffs_indices() {
+    // Regression guard for the two indices the cross-check query path
+    // relies on: per-cascade lookup + newest-first timestamp scan.
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    migrate(&conn).expect("migrate");
+
+    for name in [
+        "idx_windsurf_cost_diffs_cascade",
+        "idx_windsurf_cost_diffs_timestamp",
+    ] {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'index' AND name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("query index existence");
+        assert_eq!(exists, 1, "{name} index missing");
     }
 }
 

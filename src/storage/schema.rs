@@ -37,6 +37,10 @@ const MIGRATIONS: &[Migration] = &[
         id: "002_windsurf_sessions",
         sql: include_str!("../../migrations/002_windsurf_sessions.sql"),
     },
+    Migration {
+        id: "003_windsurf_cost_diffs",
+        sql: include_str!("../../migrations/003_windsurf_cost_diffs.sql"),
+    },
 ];
 
 /// Apply every migration that has not yet been recorded as `done` in the
