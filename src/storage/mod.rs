@@ -22,6 +22,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 pub mod file_state;
+pub mod records;
 pub mod schema;
 
 pub use file_state::FileScanContext;
