@@ -58,11 +58,19 @@ impl View {
 /// rows navigable.
 pub const SESSIONS_PAGE: usize = 2_000;
 
-/// Window (in UTC days) for the Trend view.
+/// Default window (in UTC days) for the Trend view.
 ///
-/// 7 maps to a full week in one glance; daily buckets keep the sparkline
-/// readable on narrow terminals.
+/// 7 maps to a full week in one glance; daily buckets keep the bars
+/// readable on narrow terminals. Users can cycle to the wider
+/// [`TREND_WINDOW_DAYS_WIDE`] via the `w` keybinding.
 pub const TREND_WINDOW_DAYS: usize = 7;
+
+/// Wider window the Trend view cycles into when the user presses `w`.
+///
+/// 30 days covers a full month without blowing up the table below the
+/// bar chart; beyond that, per-day granularity stops being useful at
+/// typical terminal widths and a weekly rollup would be the next step.
+pub const TREND_WINDOW_DAYS_WIDE: usize = 30;
 
 /// Top-level TUI state.
 pub struct App {
@@ -75,6 +83,11 @@ pub struct App {
     pub selected_overview: usize,
     pub selected_sessions: usize,
     pub selected_models: usize,
+    /// Active Trend window length in days. Cycled by the `w` key between
+    /// [`TREND_WINDOW_DAYS`] and [`TREND_WINDOW_DAYS_WIDE`]; the render
+    /// path reads it so the bar chart + daily table stay consistent with
+    /// whatever the user last selected.
+    pub trend_window_days: usize,
     pub should_quit: bool,
     /// Optional transient footer message (key hints, errors).
     pub footer: Option<String>,
@@ -93,6 +106,7 @@ impl App {
             selected_overview: 0,
             selected_sessions: 0,
             selected_models: 0,
+            trend_window_days: TREND_WINDOW_DAYS,
             should_quit: false,
             footer: None,
         }
@@ -119,8 +133,28 @@ impl App {
             Ok(rows) => self.model_rows = rows,
             Err(e) => self.footer = Some(format!("refresh models: {e:#}")),
         }
-        match self.db.fetch_daily_totals(TREND_WINDOW_DAYS) {
+        match self.db.fetch_daily_totals(self.trend_window_days) {
             Ok(rows) => self.trend_rows = rows,
+            Err(e) => self.footer = Some(format!("refresh trend: {e:#}")),
+        }
+    }
+
+    /// Cycle the Trend window between the two preset widths and re-fetch.
+    ///
+    /// Kept as a first-class method (not inlined into `on_key`) so tests
+    /// can drive it without synthesizing `KeyEvent`s and so the `w` key
+    /// handler stays a single line.
+    pub fn cycle_trend_window(&mut self) {
+        self.trend_window_days = if self.trend_window_days >= TREND_WINDOW_DAYS_WIDE {
+            TREND_WINDOW_DAYS
+        } else {
+            TREND_WINDOW_DAYS_WIDE
+        };
+        match self.db.fetch_daily_totals(self.trend_window_days) {
+            Ok(rows) => {
+                self.trend_rows = rows;
+                self.footer = Some(format!("trend window: {} days", self.trend_window_days));
+            }
             Err(e) => self.footer = Some(format!("refresh trend: {e:#}")),
         }
     }
@@ -205,6 +239,13 @@ impl App {
             KeyCode::Char('r') => {
                 self.refresh();
                 self.footer = Some("refreshed".to_string());
+                true
+            }
+            // `w` is Trend-only: elsewhere we leave it unhandled so the
+            // user doesn't see a misleading footer update if they press
+            // it from Overview.
+            KeyCode::Char('w') if self.view == View::Trend => {
+                self.cycle_trend_window();
                 true
             }
             KeyCode::Enter => self.handle_enter(),

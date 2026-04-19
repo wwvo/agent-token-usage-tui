@@ -15,6 +15,9 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::widgets::Bar;
+use ratatui::widgets::BarChart;
+use ratatui::widgets::BarGroup;
 use ratatui::widgets::Block;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
@@ -23,7 +26,6 @@ use ratatui::widgets::Row;
 use ratatui::widgets::Scrollbar;
 use ratatui::widgets::ScrollbarOrientation;
 use ratatui::widgets::ScrollbarState;
-use ratatui::widgets::Sparkline;
 use ratatui::widgets::Table;
 use ratatui::widgets::TableState;
 
@@ -116,7 +118,11 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, app: &App) {
 // ---- Footer ---------------------------------------------------------------
 
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let hints = "q/Esc quit  1/2/3 view  j/k move  g/G top/bottom  Enter drill-in  r refresh";
+    // `w` is Trend-only today; advertising it in every view's footer is
+    // still the simplest path — the hint bar is already a dense pile of
+    // keybindings and users don't expect every key to work everywhere.
+    let hints =
+        "q/Esc quit  1/2/3/4 view  j/k move  g/G top/bottom  Enter drill-in  r refresh  w window";
     let msg = app.footer.as_deref().unwrap_or("");
     let line = Line::from(vec![
         Span::styled(hints, Style::default().maybe_fg(Color::DarkGray)),
@@ -302,26 +308,37 @@ fn model_row(m: &ModelTally) -> Row<'_> {
 // ---- Trend view -----------------------------------------------------------
 
 fn draw_trend(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    // Split: top half = cost sparkline, bottom half = per-day detail table.
-    // A single `Sparkline` gives a clear "shape of the week" visual; the
-    // table below answers "what were the actual numbers" without needing a
-    // separate drill-down.
+    // Split: top = cost bar chart (labeled, discrete per-day bars), bottom
+    // = per-day detail table. The bar chart trades the sparkline's
+    // continuous-curve aesthetic for inline numeric labels + dates — a
+    // better fit for terminal-width-constrained data where each day is
+    // already a discrete bucket.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7), // sparkline block (borders + 5 sample rows)
+            Constraint::Length(9), // bar chart block (borders + 7 bar rows)
             Constraint::Min(0),    // data table fills the rest
         ])
         .split(area);
 
-    draw_trend_sparkline(frame, chunks[0], &app.trend_rows);
+    draw_trend_barchart(frame, chunks[0], &app.trend_rows);
     draw_trend_table(frame, chunks[1], &app.trend_rows);
 }
 
-fn draw_trend_sparkline(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) {
-    // ratatui::Sparkline takes `&[u64]`. We scale cost (USD) by 10_000 so a
-    // sub-cent day still registers as a non-zero bar.
-    let data: Vec<u64> = rows
+fn draw_trend_barchart(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) {
+    // Scale cost (USD) by 10_000 so a sub-cent day still registers as a
+    // non-zero bar; same trick the old sparkline used. We deliberately
+    // chart cost — not tokens — because cost is the one quantity users
+    // compare across models and days.
+    //
+    // Per-bar label format `MM-DD` (5 chars): month+day is enough context
+    // for a 7-or-30-day window; year would only become necessary if we
+    // ever extended the window across a year boundary, which we don't.
+    let labels: Vec<String> = rows
+        .iter()
+        .map(|r| r.date.format("%m-%d").to_string())
+        .collect();
+    let values: Vec<u64> = rows
         .iter()
         .map(|r| (r.total_cost_usd * 10_000.0).max(0.0) as u64)
         .collect();
@@ -331,18 +348,49 @@ fn draw_trend_sparkline(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) 
     });
 
     let title = format!(
-        " Trend (last {} days)   total: {} tok / {} ",
+        " Trend (last {} days)   total: {} tok / {}   [w] window ",
         rows.len(),
         format_int(total_tokens),
         format_usd(total_cost),
     );
 
-    let spark = Sparkline::default()
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .data(&data)
-        .style(Style::default().maybe_fg(Color::Cyan));
+    // Auto-size the bar width + gap to the available inner area. The block
+    // borders eat 2 cols; after that we want each bar-plus-gap to evenly
+    // partition the remaining width. Clamp bar_width to [1, 5] so very wide
+    // terminals don't produce absurdly fat bars and very narrow ones still
+    // fit at least one glyph per bar.
+    let n = u16::try_from(rows.len()).unwrap_or(u16::MAX).max(1);
+    let inner_width = area.width.saturating_sub(2);
+    let per_bar = (inner_width / n).max(1);
+    let bar_gap: u16 = if per_bar >= 3 { 1 } else { 0 };
+    let bar_width = per_bar.saturating_sub(bar_gap).clamp(1, 5);
 
-    frame.render_widget(spark, area);
+    // Build Bar objects individually so labels survive the `&str` lifetime
+    // tangle: `BarChart::data(BarGroup)` takes owned `Bar`s whose `label`
+    // field is a `Line<'static>` via `Line::raw(String)`.
+    let bars: Vec<Bar<'_>> = labels
+        .into_iter()
+        .zip(values.iter().copied())
+        .map(|(label, v)| {
+            Bar::default()
+                .value(v)
+                .label(Line::raw(label))
+                .style(Style::default().maybe_fg(Color::Cyan))
+        })
+        .collect();
+
+    let chart = BarChart::default()
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(bar_width)
+        .bar_gap(bar_gap)
+        .value_style(
+            Style::default()
+                .maybe_fg(Color::Black)
+                .maybe_bg(Color::Cyan),
+        );
+
+    frame.render_widget(chart, area);
 }
 
 fn draw_trend_table(frame: &mut Frame<'_>, area: Rect, rows: &[DailyTotal]) {

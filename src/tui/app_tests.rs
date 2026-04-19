@@ -262,3 +262,67 @@ fn sessions_page_constant_is_generous() {
     // enable scrollbar-based browsing. Don't silently shrink it again.
     const { assert!(super::SESSIONS_PAGE >= 2_000) };
 }
+
+#[test]
+fn default_trend_window_matches_constant() {
+    // New field must start at the documented default. Regression guard for
+    // anyone who re-orders the `App::new` initializer list.
+    let app = new_app();
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
+}
+
+#[test]
+fn w_key_is_unhandled_outside_trend_view() {
+    // `w` is reserved for the Trend view's window toggle; in Overview /
+    // Sessions / Models it must fall through so a future binding can
+    // reuse it without subtle conflicts.
+    let mut app = new_app();
+    app.refresh();
+    assert!(!app.on_key(press(KeyCode::Char('w')), PAGE));
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
+
+    app.on_key(press(KeyCode::Char('2')), PAGE); // Sessions
+    assert!(!app.on_key(press(KeyCode::Char('w')), PAGE));
+
+    app.on_key(press(KeyCode::Char('3')), PAGE); // Models
+    assert!(!app.on_key(press(KeyCode::Char('w')), PAGE));
+}
+
+#[test]
+fn w_key_on_trend_cycles_window_and_resizes_rows() {
+    // On Trend view, `w` toggles between 7 and 30 days. Both the window
+    // integer AND the fetched row vector must reflect the change so the
+    // render path stays consistent with the state.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('4')), PAGE); // Trend
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
+    assert_eq!(app.trend_rows.len(), super::TREND_WINDOW_DAYS);
+
+    // 7 → 30.
+    assert!(app.on_key(press(KeyCode::Char('w')), PAGE));
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS_WIDE);
+    assert_eq!(app.trend_rows.len(), super::TREND_WINDOW_DAYS_WIDE);
+    assert!(
+        app.footer.as_deref().is_some_and(|s| s.contains("30")),
+        "footer should announce the new window; got {:?}",
+        app.footer,
+    );
+
+    // 30 → 7 again.
+    app.on_key(press(KeyCode::Char('w')), PAGE);
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
+    assert_eq!(app.trend_rows.len(), super::TREND_WINDOW_DAYS);
+}
+
+#[test]
+fn cycle_trend_window_method_is_independent_of_keybinding() {
+    // Direct method call path: useful for tests and future automation
+    // (e.g. CLI flag `--trend-window=30` could call this at boot).
+    let mut app = new_app();
+    app.refresh();
+    app.cycle_trend_window();
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS_WIDE);
+    app.cycle_trend_window();
+    assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
+}
