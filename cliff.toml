@@ -155,27 +155,26 @@ commit_parsers = [
     # would false-positive into the 💥 bucket.
     { body = '(?m)^BREAKING[ -]CHANGE:', group = "<!-- 00 -->💥 Breaking Changes" },
 
-    # Conventional Commits types → Keep a Changelog-flavoured sections.
-    # English names align with the upstream spec; emojis mirror the
-    # commit subject prefix so release notes keep a visual rhythm.
+    # Only three "user-facing" section headings survive: what's new,
+    # what got fixed, and everything else (Maintenance). Inspired by
+    # openai/codex's 4-section cliff.toml (Features / Bug Fixes /
+    # Release / Other); we keep Breaking as a distinct section above
+    # because Keep a Changelog calls for it explicitly.
     { message = '^feat', group = "<!-- 01 -->✨ Added" },
     { message = '^fix', group = "<!-- 02 -->🐛 Fixed" },
-    { message = '^perf', group = "<!-- 03 -->⚡ Performance" },
-    { message = '^refactor', group = "<!-- 04 -->♻ Refactored" },
-    { message = '^docs', group = "<!-- 05 -->📝 Documentation" },
-    { message = '^test', group = "<!-- 06 -->✅ Tests" },
-    { message = '^style', group = "<!-- 07 -->🎨 Styles" },
-    { message = '^build', group = "<!-- 08 -->📦 Build" },
-    { message = '^ci', group = "<!-- 09 -->👷 CI/CD" },
 
     # Release / dependency chores clutter human-facing notes; hide them.
-    # Everything else under `chore` (tooling, housekeeping) still shows
-    # up under the 🔧 bucket.
     { message = '^chore\(release\)', skip = true },
     { message = '^chore\(deps\)', skip = true },
-    { message = '^chore', group = "<!-- 10 -->🔧 Chore" },
 
-    { message = '^revert', group = "<!-- 11 -->⏪ Reverts" },
+    # Every other Conventional Commits type rolls up into a single
+    # 🔧 Maintenance bucket. Experimentally, nine top-level sections
+    # per release (Refactored / Performance / Docs / Tests / Styles /
+    # Build / CI-CD / Chore / Reverts) read as fragmented — most
+    # held only 1–2 bullets each. Lumping them into one "internals"
+    # heading keeps release notes scannable, and matches the spirit
+    # of codex's cliff.toml (which collapses even harder).
+    { message = '^(perf|refactor|docs|test|style|build|ci|chore|revert)', group = "<!-- 03 -->🔧 Maintenance" },
 
     # Escape hatch: let contributors opt out of the changelog per-commit.
     # Added to the *commit footer*, e.g. `Footer:\nchangelog: ignore`.
