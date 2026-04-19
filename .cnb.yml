@@ -76,6 +76,32 @@ main:
         - name: test
           script: cargo test --locked
 
+    # Lightweight smoke for the companion VSCode extension under
+    # `tools/windsurf-exporter/`. Catches TypeScript regressions (broken
+    # imports, dropped API methods, changed vscode d.ts surface) without
+    # waiting for tag_push → vsix packaging.
+    #
+    # Uses `node:20-slim` rather than reusing `rust:1.85-slim` + apt-get
+    # install nodejs: saves ~200MB of apt traffic per run and keeps this
+    # pipeline's failure mode narrowly "exporter TypeScript broke",
+    # distinct from the Rust lint-and-test pipeline above.
+    - name: exporter-typecheck
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: node:20-slim
+      stages:
+        - name: npm-ci-and-compile
+          # `npm ci` installs strictly against package-lock.json
+          # (reproducible, unlike `npm install` which may mutate the
+          # lock). `--loglevel=error` silences the standard deprecation
+          # / funding noise while still surfacing real failures.
+          script: |
+            set -eu
+            cd tools/windsurf-exporter
+            npm ci --loglevel=error
+            npm run compile
+
 # Catch-all branch (`$`) — PR events. Lives separately from `main.push`
 # so a merge to `main` doesn't run amd64 fmt+clippy+test twice. The same
 # catch-all also hosts `tag_push`, since tags live on a detached ref that
@@ -102,6 +128,23 @@ $:
           script: cargo clippy --all-targets --locked -- -D warnings
         - name: test
           script: cargo test --locked
+
+    # Mirror the main.push-side exporter smoke on PRs so a broken
+    # extension commit gets caught before it's merged — the whole point
+    # of lifting it from tag_push to push/PR is shifting the failure
+    # left in the contribution flow.
+    - name: exporter-typecheck-pr
+      runner:
+        tags: cnb:arch:amd64
+      docker:
+        image: node:20-slim
+      stages:
+        - name: npm-ci-and-compile
+          script: |
+            set -eu
+            cd tools/windsurf-exporter
+            npm ci --loglevel=error
+            npm run compile
 
   # Release pipelines — one per Linux architecture. Each produces a
   # stripped binary inside a versioned tarball plus a side-by-side

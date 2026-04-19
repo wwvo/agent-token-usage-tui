@@ -77,3 +77,30 @@ jobs:
       # also fire missing-docs on every helper fn; those aren't part of the
       # contract and should stay unencumbered.
       - run: cargo doc --no-deps
+
+  # Companion VSCode extension lives under `tools/windsurf-exporter/`.
+  # Fast TypeScript smoke: `npm ci && npm run compile`. Keeps broken
+  # exporter commits from landing on `main` and blocking a future
+  # tag_push → vsix packaging step.
+  #
+  # `actions/setup-node@v4` caches `~/.npm` keyed off of the exporter's
+  # package-lock.json — identical lock → cache hit → install skipped;
+  # any dependency change invalidates automatically.
+  exporter:
+    name: Windsurf exporter typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/windsurf-exporter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/windsurf-exporter/package-lock.json
+      # `npm ci` installs strictly against package-lock.json; `npm
+      # install` would silently rewrite it. `--loglevel=error` mutes
+      # routine deprecation warnings without hiding real failures.
+      - run: npm ci --loglevel=error
+      - run: npm run compile
