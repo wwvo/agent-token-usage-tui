@@ -26,8 +26,10 @@ pub mod file_state;
 pub mod pricing;
 pub mod records;
 pub mod schema;
+pub mod windsurf_sessions;
 
 pub use file_state::FileScanContext;
+pub use windsurf_sessions::WindsurfSessionSummary;
 
 /// Owned handle to the portable SQLite database.
 ///
