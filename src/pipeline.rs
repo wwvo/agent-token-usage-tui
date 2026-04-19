@@ -19,7 +19,10 @@
 //!
 //! * `openclaw_bases` — bases that contain `<agent>/sessions/*.jsonl` trees.
 //! * `opencode_dbs` — absolute paths to OpenCode SQLite files.
-//! * `windsurf_bases` — reserved for the Phase 2 VSCode exporter output.
+//! * `windsurf_bases` — override for the VSCode exporter's JSONL output dir.
+//!   Empty (the default) falls back to [`WindsurfCollector::with_default_paths`],
+//!   which honours `ATUT_WINDSURF_SESSIONS_DIR` and otherwise lands on
+//!   `~/.atut/windsurf-sessions/`.
 //!
 //! Claude and Codex use their well-known `$HOME`-relative directories and do
 //! not appear in the config; see [`ClaudeCollector::with_default_paths`] and
@@ -47,7 +50,9 @@ pub struct PipelineConfig {
     pub openclaw_bases: Vec<PathBuf>,
     /// OpenCode SQLite file paths.
     pub opencode_dbs: Vec<PathBuf>,
-    /// Windsurf exporter output (Phase 2). Currently unused but plumbed.
+    /// Windsurf exporter output directories. Empty means "use the default"
+    /// — see [`WindsurfCollector::with_default_paths`] for the env-var and
+    /// `~/.atut/windsurf-sessions/` fallback.
     pub windsurf_bases: Vec<PathBuf>,
 }
 
@@ -90,7 +95,15 @@ pub async fn run_scan(
     let opencode = OpenCodeCollector::new(config.opencode_dbs.clone());
     summaries.push(run_one(&opencode, db, reporter).await?);
 
-    let windsurf = WindsurfCollector::new(config.windsurf_bases.clone());
+    // Empty `windsurf_bases` falls back to the exporter's default output dir
+    // (`~/.atut/windsurf-sessions/`, or `ATUT_WINDSURF_SESSIONS_DIR` if set).
+    // Without this, the out-of-the-box experience silently scans zero files
+    // because the default PipelineConfig is `vec![]`.
+    let windsurf = if config.windsurf_bases.is_empty() {
+        WindsurfCollector::with_default_paths()
+    } else {
+        WindsurfCollector::new(config.windsurf_bases.clone())
+    };
     summaries.push(run_one(&windsurf, db, reporter).await?);
 
     // Best-effort cost recompute; empty pricing table → 0 rows, no warnings.
