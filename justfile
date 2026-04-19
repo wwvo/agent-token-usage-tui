@@ -70,6 +70,42 @@ tui:
 release:
     cargo build --profile dist --locked
 
+# ---- Windsurf exporter (.vsix) ------------------------------------------
+#
+# Companion VSCode extension lives under `tools/windsurf-exporter/`. The
+# two recipes below wrap its npm scripts so you don't have to cd around.
+# `npm ci --loglevel=error` is used (not `npm install`) to keep installs
+# reproducible against the committed package-lock.json and to mute the
+# usual deprecation / warning noise that doesn't block compilation.
+#
+# Both recipes use `#!/usr/bin/env bash` shebangs for the same reason as
+# release-prepare / release-publish above: Windows `powershell` (PS 5.x)
+# doesn't support `&&` chaining and bash ships with Git for Windows.
+#
+# Requires: Node.js >= 18, npm on PATH.
+
+# Type-check the exporter without emitting a .vsix. Fast (~10s after
+# cache), surfaces TypeScript errors before they hit CI or a user who
+# just ran `just vsix`.
+vsix-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tools/windsurf-exporter
+    npm ci --loglevel=error
+    npm run compile
+
+# Build the installable `agent-token-usage-tui-windsurf-exporter-X.Y.Z.
+# vsix`. `npm run package` delegates to `vsce package --no-dependencies`
+# (we bundle zero runtime deps, so no vendoring work needed). The output
+# `.vsix` lands in `tools/windsurf-exporter/`; install it in Windsurf via
+# "Extensions → … → Install from VSIX".
+vsix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tools/windsurf-exporter
+    npm ci --loglevel=error
+    npm run package
+
 # ---- CI parity -----------------------------------------------------------
 
 # Run the same gates CI will run. Succeed locally before pushing.
