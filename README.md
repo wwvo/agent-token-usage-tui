@@ -42,7 +42,7 @@ everything works offline.
 Requires Rust 1.85+ (`edition = "2024"`), stable toolchain.
 
 ```bash
-git clone https://github.com/briqt/agent-token-usage-tui
+git clone https://cnb.cool/prevailna/agent-token-usage-tui
 cd agent-token-usage-tui
 cargo build --release
 # binary at target/release/agent-token-usage-tui
