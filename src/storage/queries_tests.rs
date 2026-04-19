@@ -206,6 +206,73 @@ fn fetch_recent_sessions_populates_totals() {
 }
 
 #[test]
+fn fetch_recent_sessions_by_model_returns_only_matching_sessions() {
+    let (_tmp, db) = seed_db();
+    // seed_db has exactly one Claude session using claude-opus-4-7 (cl-s2).
+    let opus_sessions = db
+        .fetch_recent_sessions_by_model("claude-opus-4-7", 10)
+        .expect("sessions_by_model");
+    assert_eq!(opus_sessions.len(), 1);
+    assert_eq!(opus_sessions[0].session_id, "cl-s2");
+    // Totals are scoped to the model, so records == 1 and totals match
+    // that single usage row (200+100+50+0 tokens, cost 2.0).
+    assert_eq!(opus_sessions[0].records, 1);
+    assert_eq!(opus_sessions[0].total_tokens, 350);
+    assert!((opus_sessions[0].total_cost_usd - 2.0).abs() < 1e-9);
+    // Prompts stays session-wide (1 for cl-s2), not model-scoped.
+    assert_eq!(opus_sessions[0].prompts, 1);
+}
+
+#[test]
+fn fetch_recent_sessions_by_model_for_unknown_model_is_empty() {
+    let (_tmp, db) = seed_db();
+    let none = db
+        .fetch_recent_sessions_by_model("does-not-exist-v99", 10)
+        .expect("sessions_by_model");
+    assert!(none.is_empty(), "unknown model must not match any session");
+}
+
+#[test]
+fn fetch_recent_sessions_by_model_is_newest_first() {
+    // Seed an extra Claude session using the same model as cl-s1 but
+    // stamped later, so we can verify ordering is DESC by start_time.
+    let (_tmp, db) = seed_db();
+    db.upsert_session(&SessionRecord {
+        source: Source::Claude,
+        session_id: "cl-s3".into(),
+        project: "proj-c".into(),
+        cwd: "/p/c".into(),
+        version: String::new(),
+        git_branch: String::new(),
+        start_time: ts("2026-04-19T12:00:00Z"),
+        prompts: 0,
+    })
+    .unwrap();
+    db.insert_usage_batch(&[UsageRecord {
+        source: Source::Claude,
+        session_id: "cl-s3".into(),
+        model: "claude-sonnet-4-5".into(),
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        reasoning_output_tokens: 0,
+        cost_usd: 0.01,
+        timestamp: ts("2026-04-19T12:05:00Z"),
+        project: "proj-c".into(),
+        git_branch: String::new(),
+    }])
+    .unwrap();
+
+    let got = db
+        .fetch_recent_sessions_by_model("claude-sonnet-4-5", 10)
+        .expect("sessions_by_model");
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].session_id, "cl-s3"); // 12:00, newest
+    assert_eq!(got[1].session_id, "cl-s1"); // 10:00
+}
+
+#[test]
 fn fetch_model_tallies_sorts_by_cost_desc() {
     let (_tmp, db) = seed_db();
     let models = db.fetch_model_tallies(None).expect("models");

@@ -138,7 +138,7 @@ fn r_key_sets_refresh_footer() {
 }
 
 #[test]
-fn enter_on_overview_switches_to_sessions_filtered() {
+fn enter_on_overview_switches_to_sessions_filtered_by_source() {
     // With an empty DB the sessions view stays empty, but we still test the
     // state transitions: view → Sessions, footer set, selection reset.
     let mut app = new_app();
@@ -148,8 +148,37 @@ fn enter_on_overview_switches_to_sessions_filtered() {
     assert!(
         app.footer
             .as_deref()
-            .is_some_and(|s| s.starts_with("filter:"))
+            .is_some_and(|s| s.starts_with("filter: source=")),
+        "footer={:?}",
+        app.footer,
     );
+}
+
+#[test]
+fn enter_on_models_with_empty_rows_is_still_a_handled_key() {
+    // Empty DB → model_rows empty → Enter is handled (returns true) but
+    // nothing changes. Switching to Models view without any rows
+    // shouldn't panic, and subsequent Enter should be harmless.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('3')), PAGE);
+    assert_eq!(app.view, View::Models);
+    assert!(app.model_rows.is_empty());
+    app.on_key(press(KeyCode::Enter), PAGE);
+    // No selection → no view change, no footer mutation.
+    assert_eq!(app.view, View::Models);
+}
+
+#[test]
+fn enter_on_sessions_and_trend_is_unhandled() {
+    // Enter is a view-specific drill-down; Sessions and Trend have no
+    // target so the key should fall through (returns false).
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('2')), PAGE); // Sessions
+    assert!(!app.on_key(press(KeyCode::Enter), PAGE));
+    app.on_key(press(KeyCode::Char('4')), PAGE); // Trend
+    assert!(!app.on_key(press(KeyCode::Enter), PAGE));
 }
 
 #[test]

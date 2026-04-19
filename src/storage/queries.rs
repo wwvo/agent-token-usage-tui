@@ -267,6 +267,86 @@ impl Db {
         Ok(out)
     }
 
+    /// Return the N most recent sessions that ever used `model`, newest first.
+    ///
+    /// Unlike [`Self::fetch_recent_sessions`] which aggregates every usage
+    /// row, the decorated totals here (records / tokens / cost) are scoped
+    /// to `model` only — the drill-down's promise is "what did *this*
+    /// model cost on each session", so mixing in other models' totals
+    /// would mislead.
+    ///
+    /// `prompts` is still the session-wide user-input count; prompts
+    /// aren't tied to a model in our schema.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces rusqlite / mapping errors annotated with query context.
+    pub fn fetch_recent_sessions_by_model(
+        &self,
+        model: &str,
+        limit: usize,
+    ) -> Result<Vec<SessionSummary>> {
+        let conn = self.lock();
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+
+        // Sessions that have *any* usage row with this model. `DISTINCT`
+        // protects against the join duplicating sessions with N rows.
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT s.source, s.session_id, s.project, s.start_time, s.prompts \
+                 FROM sessions s \
+                 INNER JOIN usage_records u \
+                   ON u.source = s.source AND u.session_id = s.session_id \
+                 WHERE u.model = ?1 \
+                 ORDER BY s.start_time DESC \
+                 LIMIT ?2",
+            )
+            .context("prepare sessions_by_model")?;
+        let rows = stmt
+            .query_map(params![model, limit], map_session_row)
+            .context("run sessions_by_model")?;
+
+        let mut out: Vec<SessionSummary> = Vec::new();
+        for row in rows {
+            out.push(row.context("row sessions_by_model")?);
+        }
+        drop(stmt);
+
+        // Per-session totals, scoped to this model.
+        let mut totals_stmt = conn
+            .prepare(
+                "SELECT COUNT(*), \
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_input_tokens \
+                                     + cache_creation_input_tokens),0), \
+                        COALESCE(SUM(cost_usd),0.0) \
+                 FROM usage_records \
+                 WHERE source = ?1 AND session_id = ?2 AND model = ?3",
+            )
+            .context("prepare sessions_by_model totals")?;
+        let mut prompts_stmt = conn
+            .prepare(
+                "SELECT COUNT(*) FROM prompt_events \
+                 WHERE source = ?1 AND session_id = ?2",
+            )
+            .context("prepare sessions_by_model prompts")?;
+        for s in &mut out {
+            let mut rows = totals_stmt
+                .query(params![s.source.as_str(), &s.session_id, model])
+                .context("run sessions_by_model totals")?;
+            if let Some(row) = rows.next().context("read sessions_by_model totals")? {
+                s.records = row.get(0)?;
+                s.total_tokens = row.get(1)?;
+                s.total_cost_usd = row.get(2)?;
+            }
+            let p: i64 = prompts_stmt
+                .query_row(params![s.source.as_str(), &s.session_id], |r| r.get(0))
+                .context("query sessions_by_model prompts")?;
+            s.prompts = p;
+        }
+
+        Ok(out)
+    }
+
     /// Return one [`DailyTotal`] per UTC day in the rolling window
     /// `[today - days + 1 .. today]` (inclusive, ascending).
     ///

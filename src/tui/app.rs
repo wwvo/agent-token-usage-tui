@@ -207,26 +207,59 @@ impl App {
                 self.footer = Some("refreshed".to_string());
                 true
             }
-            KeyCode::Enter => {
-                // Jump from Overview into Sessions filtered by the highlighted source.
-                if self.view == View::Overview {
-                    if let Some(src) = self.selected_overview_source() {
-                        match self.db.fetch_recent_sessions(Some(src), SESSIONS_PAGE) {
-                            Ok(rows) => {
-                                self.sessions_rows = rows;
-                                self.selected_sessions = 0;
-                                self.view = View::Sessions;
-                                self.footer = Some(format!("filter: {src}"));
-                            }
-                            Err(e) => self.footer = Some(format!("filter failed: {e:#}")),
-                        }
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
+            KeyCode::Enter => self.handle_enter(),
             _ => false,
+        }
+    }
+
+    /// Handle Enter: drill from the current view into Sessions with a filter.
+    ///
+    /// Two drill paths today:
+    /// - Overview → Sessions filtered by the highlighted source.
+    /// - Models → Sessions filtered by the highlighted model (scope: any
+    ///   session that ever used that model, decorated with model-scoped
+    ///   totals so the numbers answer "what did *this* model cost here").
+    ///
+    /// Returns `true` if the key was handled; `false` for views that don't
+    /// define an Enter action (Sessions / Trend) so callers know to fall
+    /// back to the default path.
+    fn handle_enter(&mut self) -> bool {
+        match self.view {
+            View::Overview => {
+                if let Some(src) = self.selected_overview_source() {
+                    match self.db.fetch_recent_sessions(Some(src), SESSIONS_PAGE) {
+                        Ok(rows) => {
+                            self.sessions_rows = rows;
+                            self.selected_sessions = 0;
+                            self.view = View::Sessions;
+                            self.footer = Some(format!("filter: source={src}"));
+                        }
+                        Err(e) => self.footer = Some(format!("filter failed: {e:#}")),
+                    }
+                }
+                true
+            }
+            View::Models => {
+                if let Some(m) = self.model_rows.get(self.selected_models) {
+                    // Clone the model string up front so the `&self.db` borrow
+                    // and the `&self` selection borrow don't overlap.
+                    let model = m.model.clone();
+                    match self
+                        .db
+                        .fetch_recent_sessions_by_model(&model, SESSIONS_PAGE)
+                    {
+                        Ok(rows) => {
+                            self.sessions_rows = rows;
+                            self.selected_sessions = 0;
+                            self.view = View::Sessions;
+                            self.footer = Some(format!("filter: model={model}"));
+                        }
+                        Err(e) => self.footer = Some(format!("filter failed: {e:#}")),
+                    }
+                }
+                true
+            }
+            View::Sessions | View::Trend => false,
         }
     }
 
