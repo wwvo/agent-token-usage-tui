@@ -28,10 +28,16 @@ struct Migration {
 }
 
 /// Chronological migration list; append only.
-const MIGRATIONS: &[Migration] = &[Migration {
-    id: "001_init",
-    sql: include_str!("../../migrations/001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        id: "001_init",
+        sql: include_str!("../../migrations/001_init.sql"),
+    },
+    Migration {
+        id: "002_windsurf_sessions",
+        sql: include_str!("../../migrations/002_windsurf_sessions.sql"),
+    },
+];
 
 /// Apply every migration that has not yet been recorded as `done` in the
 /// current database.

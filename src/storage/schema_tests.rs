@@ -29,6 +29,7 @@ fn migrate_creates_all_expected_tables() {
         "prompt_events",
         "sessions",
         "usage_records",
+        "windsurf_sessions",
     ] {
         assert!(
             tables.iter().any(|t| t == expected),
@@ -54,14 +55,35 @@ fn migrate_records_state_in_meta_table() {
     let conn = Connection::open_in_memory().expect("in-memory db");
     migrate(&conn).expect("migrate");
 
-    let value: String = conn
+    for id in ["migration_001_init", "migration_002_windsurf_sessions"] {
+        let value: String = conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap_or_else(|e| panic!("meta row for {id} must exist: {e}"));
+        assert_eq!(value, "done", "{id} must be marked done");
+    }
+}
+
+#[test]
+fn migrate_creates_windsurf_sessions_index() {
+    // Regression guard for the new per-cascade drill-down path: the
+    // `last_seen DESC` index is the primary access pattern the future
+    // TUI view relies on, so losing it would silently turn "SELECT …
+    // ORDER BY last_seen DESC" into a table scan on the busy collector
+    // path.
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    migrate(&conn).expect("migrate");
+
+    let exists: i64 = conn
         .query_row(
-            "SELECT value FROM meta WHERE key = 'migration_001_init'",
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_windsurf_sessions_last_seen'",
             [],
             |row| row.get(0),
         )
-        .expect("meta row exists");
-    assert_eq!(value, "done");
+        .expect("query index existence");
+    assert_eq!(exists, 1, "windsurf_sessions last_seen index missing");
 }
 
 #[test]
