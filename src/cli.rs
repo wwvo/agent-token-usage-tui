@@ -22,7 +22,14 @@ use crate::logging;
 use crate::logging::LogMode;
 use crate::pipeline::PipelineConfig;
 use crate::pipeline::run_scan as pipeline_run_scan;
+use crate::pricing::PricingSyncOutcome;
+use crate::pricing::cost::calc_cost;
+use crate::pricing::sync_or_fallback;
 use crate::storage::Db;
+
+/// Default pricing freshness window. Reused by both `sync-prices` and the
+/// TUI startup sync to keep user-facing behavior aligned.
+const PRICING_FRESHNESS: chrono::Duration = chrono::Duration::hours(24);
 
 /// Top-level CLI schema.
 ///
@@ -95,10 +102,7 @@ pub fn run() -> Result<()> {
             todo!("TUI entry point lands in M5 C6; use `version` / `scan` subcommands for now")
         }
         Some(Commands::Scan) => run_scan(cli.data_dir.as_deref()),
-        Some(Commands::SyncPrices) => {
-            // M2 C7 implements `pricing::sync_or_fallback`; M4 C5 calls it here.
-            todo!("pricing sync lands in M2 C7 + M4 C5")
-        }
+        Some(Commands::SyncPrices) => run_sync_prices(cli.data_dir.as_deref()),
         Some(Commands::Version) => print_version(),
     }
 }
@@ -149,6 +153,66 @@ fn run_scan(data_dir: Option<&Path>) -> Result<()> {
         .context("run scan pipeline")?;
 
     print_scan_summary(&report.summaries, report.costs_recalculated)
+}
+
+/// `atut sync-prices` — refresh the litellm pricing cache and re-price rows.
+///
+/// Policy:
+/// * Short-circuit when the DB's pricing is already younger than 24h.
+/// * Otherwise hit litellm's GitHub raw JSON.
+/// * On any network failure, fall back to the snapshot baked into the binary
+///   (build.rs embeds it via `include_bytes!`), so the command never leaves
+///   the user stuck on an airplane.
+/// * After the sync, recompute `cost_usd` for every row that's still zero —
+///   freshly-synced pricing is only useful if it propagates into historical
+///   usage.
+fn run_sync_prices(data_dir: Option<&Path>) -> Result<()> {
+    let db_path = resolve_db_path(data_dir)?;
+    let db =
+        Db::open(&db_path).with_context(|| format!("open database at {}", db_path.display()))?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for sync-prices")?;
+
+    let outcome = rt
+        .block_on(sync_or_fallback(&db, PRICING_FRESHNESS))
+        .context("sync pricing catalog")?;
+
+    let prices = db.get_all_pricing().context("read pricing table")?;
+    let costs_updated = if prices.is_empty() {
+        0
+    } else {
+        db.recalc_costs(&prices, calc_cost)
+            .context("recalculate costs after sync")?
+    };
+
+    print_sync_summary(outcome, costs_updated)
+}
+
+/// Render the pricing sync outcome + cost recompute count to stdout.
+fn print_sync_summary(outcome: PricingSyncOutcome, costs_updated: usize) -> Result<()> {
+    let mut out = std::io::stdout().lock();
+    match outcome {
+        PricingSyncOutcome::StillFresh { models } => {
+            writeln!(
+                out,
+                "Pricing cache is fresh: {models} models (no network fetch)"
+            )?;
+        }
+        PricingSyncOutcome::FetchedFromNetwork { models } => {
+            writeln!(out, "Pricing refreshed from litellm: {models} models")?;
+        }
+        PricingSyncOutcome::UsedFallback { models } => {
+            writeln!(
+                out,
+                "Pricing fetch failed; used embedded fallback: {models} models"
+            )?;
+        }
+    }
+    writeln!(out, "Re-priced {costs_updated} usage rows.")?;
+    Ok(())
 }
 
 /// Emit a compact one-line-per-source summary table to stdout.
