@@ -122,14 +122,13 @@ gRPC endpoint. That's incompatible with a pure Rust CLI.
 The Phase 2 plan is a **thin companion VSCode extension** that polls
 `GetAllCascadeTrajectories` every ~60s and writes JSONL files to
 `<exe-dir>/windsurf-sessions/*.jsonl`. `collector::windsurf` (placeholder
-todahangelog
+today) will then read those files like any other agent. See
+`plans/agent-token-usage-tui-architecture-77d40b.md` §13 for the design.
+
+## Changelog
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## Cy) will then read those files like any other agent. See
-
-`plans/agent-token-usage-tui-architecture-77d40b.md` §13 for the design.
 
 ## Development
 
