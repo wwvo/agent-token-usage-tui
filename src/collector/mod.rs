@@ -17,6 +17,7 @@
 //! | M4 C3 | Windsurf (placeholder; real exporter lands in Phase 2) |
 
 pub mod reporter;
+pub mod util;
 
 pub use reporter::ChannelReporter;
 pub use reporter::NoopReporter;
