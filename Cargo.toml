@@ -1,6 +1,6 @@
 [package]
 name = "agent-token-usage-tui"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
