@@ -5,3 +5,4 @@
 //! companion Windsurf exporter VSCode extension planned for Phase 2).
 
 pub mod app_dir;
+pub mod logging;
