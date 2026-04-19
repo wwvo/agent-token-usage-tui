@@ -114,10 +114,57 @@ pub async fn run_scan(
         db.recalc_costs(&prices, calc_cost)?
     };
 
+    // Windsurf cross-check: surface any cascade where atut's own
+    // `cost_usd` estimate drifts past a few percent of the server's
+    // own figure. Best-effort — errors fetching the summary aren't
+    // fatal, they just skip the warning pass.
+    warn_on_windsurf_cost_drift(db);
+
     Ok(ScanReport {
         summaries,
         costs_recalculated,
     })
+}
+
+/// Threshold (as a fraction) above which cost drift warrants a warning.
+///
+/// `0.05` (= 5%) is a cheap "have we noticed Windsurf shipping a price
+/// change before litellm caught up?" tripwire. Anything below that is
+/// usually within rounding noise or per-request provider variance.
+const COST_DRIFT_THRESHOLD: f64 = 0.05;
+
+/// Emit `tracing::warn!` for every Windsurf cascade whose ours-vs-server
+/// cost differs by more than [`COST_DRIFT_THRESHOLD`]. Silent when the
+/// summary query errors (we'd rather lose the warning than abort the
+/// scan) or the server-side figure is missing / zero.
+fn warn_on_windsurf_cost_drift(db: &Db) {
+    // 512 is a soft cap — the TUI's Cascades view already uses
+    // `SESSIONS_PAGE` (2k), but 512 most-recent cascades is plenty for
+    // a drift canary and keeps the extra SELECT cheap.
+    const DRIFT_SCAN_LIMIT: usize = 512;
+
+    let Ok(rows) = db.fetch_windsurf_sessions_summary(DRIFT_SCAN_LIMIT) else {
+        return;
+    };
+    for r in rows {
+        if r.server_cost_usd <= 0.0 || r.total_cost_usd <= 0.0 {
+            continue;
+        }
+        let delta = (r.total_cost_usd - r.server_cost_usd).abs();
+        let drift = delta / r.server_cost_usd;
+        if drift > COST_DRIFT_THRESHOLD {
+            tracing::warn!(
+                cascade_id = %r.cascade_id,
+                model = %r.last_model,
+                ours_usd = r.total_cost_usd,
+                server_usd = r.server_cost_usd,
+                drift_pct = drift * 100.0,
+                "windsurf cost drift: atut's estimate differs from Windsurf's own figure by \
+                 more than {:.0}% — litellm snapshot may be stale",
+                COST_DRIFT_THRESHOLD * 100.0,
+            );
+        }
+    }
 }
 
 /// Invoke one collector with lifecycle hooks on the reporter.

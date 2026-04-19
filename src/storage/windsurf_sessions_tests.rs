@@ -292,5 +292,99 @@ fn summary_has_expected_field_shape() {
         turns: 0,
         total_tokens: 0,
         total_cost_usd: 0.0,
+        server_cost_usd: 0.0,
     };
+}
+
+#[test]
+fn summary_aggregates_server_cost_from_windsurf_cost_diffs() {
+    // Cross-check path: cost_diffs rows tied to the same cascade_id
+    // flow into the summary's `server_cost_usd` via the subquery JOIN.
+    // Two rows on the same cascade should sum; rows on a different
+    // cascade must not leak.
+    let db = open_db();
+    db.upsert_windsurf_session(&rec(
+        "target",
+        "T",
+        "",
+        "gpt-5-codex",
+        1_700_000_000,
+        1_700_000_010,
+    ))
+    .expect("target meta");
+    db.upsert_windsurf_session(&rec(
+        "other",
+        "O",
+        "",
+        "gpt-5-codex",
+        1_700_000_000,
+        1_700_000_005,
+    ))
+    .expect("other meta");
+
+    db.insert_windsurf_cost_diff_batch(&[
+        crate::domain::WindsurfCostDiff {
+            step_id: "ck-1".into(),
+            cascade_id: "target".into(),
+            timestamp: ts(1_700_000_001),
+            model: "gpt-5-codex".into(),
+            server_cost_usd: 0.10,
+            server_input_tokens: 0,
+            server_output_tokens: 0,
+            server_cache_read_tokens: 0,
+        },
+        crate::domain::WindsurfCostDiff {
+            step_id: "ck-2".into(),
+            cascade_id: "target".into(),
+            timestamp: ts(1_700_000_002),
+            model: "gpt-5-codex".into(),
+            server_cost_usd: 0.40,
+            server_input_tokens: 0,
+            server_output_tokens: 0,
+            server_cache_read_tokens: 0,
+        },
+        crate::domain::WindsurfCostDiff {
+            step_id: "ck-other".into(),
+            cascade_id: "other".into(),
+            timestamp: ts(1_700_000_003),
+            model: "gpt-5-codex".into(),
+            server_cost_usd: 9.99,
+            server_input_tokens: 0,
+            server_output_tokens: 0,
+            server_cache_read_tokens: 0,
+        },
+    ])
+    .expect("insert diffs");
+
+    let rows = db.fetch_windsurf_sessions_summary(10).expect("fetch");
+    let target = rows
+        .iter()
+        .find(|r| r.cascade_id == "target")
+        .expect("target row");
+    assert!(
+        (target.server_cost_usd - 0.50).abs() < 1e-9,
+        "server_cost_usd must sum 0.10 + 0.40 = 0.50; got {}",
+        target.server_cost_usd,
+    );
+    let other = rows
+        .iter()
+        .find(|r| r.cascade_id == "other")
+        .expect("other row");
+    assert!(
+        (other.server_cost_usd - 9.99).abs() < 1e-9,
+        "other cascade's server_cost_usd must be isolated",
+    );
+}
+
+#[test]
+fn summary_server_cost_is_zero_when_no_cost_diffs() {
+    // Cascades with only usage_records but no cost_diffs must still
+    // surface `server_cost_usd = 0.0` (not NULL / not errored) so the
+    // TUI can render them without a null-safety dance.
+    let db = open_db();
+    db.upsert_windsurf_session(&rec("c1", "T", "", "m", 1, 100))
+        .expect("meta");
+    let rows = db.fetch_windsurf_sessions_summary(10).expect("fetch");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].server_cost_usd, 0.0);
 }

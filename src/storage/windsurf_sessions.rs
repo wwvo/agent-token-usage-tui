@@ -61,8 +61,16 @@ pub struct WindsurfSessionSummary {
     pub turns: i64,
     /// Sum of `input + output + cache_read + cache_creation` across those rows.
     pub total_tokens: i64,
-    /// Sum of `cost_usd` across those rows.
+    /// Sum of `cost_usd` across those rows (atut's own estimate, derived
+    /// from the litellm pricing table).
     pub total_cost_usd: f64,
+    /// Sum of `server_cost_usd` across `windsurf_cost_diffs` rows for
+    /// this cascade — Windsurf's own USD estimate. `0.0` when the
+    /// exporter hasn't captured any checkpoint costs yet (either the
+    /// cascade is brand-new or the v0.2.10 `checkpoint_cost` extractor
+    /// didn't find a match on `metadata.modelCost`). Used by the TUI's
+    /// Cascades view to surface pricing drift.
+    pub server_cost_usd: f64,
 }
 
 impl Db {
@@ -102,6 +110,12 @@ impl Db {
     ) -> Result<Vec<WindsurfSessionSummary>> {
         let limit_i64 = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
         let conn = self.lock();
+        // The `windsurf_cost_diffs` join is pre-aggregated in a
+        // subquery, not joined directly: a plain LEFT JOIN combined
+        // with the existing GROUP BY on `usage_records` would build a
+        // Cartesian product (turns × checkpoints) and silently multiply
+        // `total_cost_usd`. The subquery hits `idx_windsurf_cost_diffs_
+        // cascade` so the extra nest is cheap.
         let mut stmt = conn
             .prepare(
                 "SELECT ws.cascade_id, ws.summary, ws.workspace, ws.last_model, \
@@ -110,10 +124,16 @@ impl Db {
                         COALESCE(SUM(ur.input_tokens + ur.output_tokens + \
                                      ur.cache_read_input_tokens + \
                                      ur.cache_creation_input_tokens),0) AS total_tokens, \
-                        COALESCE(SUM(ur.cost_usd),0.0) AS total_cost_usd \
+                        COALESCE(SUM(ur.cost_usd),0.0) AS total_cost_usd, \
+                        COALESCE(scd.total_server_cost, 0.0) AS server_cost_usd \
                  FROM windsurf_sessions ws \
                  LEFT JOIN usage_records ur \
                         ON ur.session_id = ws.cascade_id AND ur.source = 'windsurf' \
+                 LEFT JOIN ( \
+                     SELECT cascade_id, SUM(server_cost_usd) AS total_server_cost \
+                     FROM windsurf_cost_diffs \
+                     GROUP BY cascade_id \
+                 ) scd ON scd.cascade_id = ws.cascade_id \
                  GROUP BY ws.cascade_id \
                  ORDER BY ws.last_seen DESC \
                  LIMIT ?1",
@@ -132,6 +152,7 @@ impl Db {
                     turns: r.get(6)?,
                     total_tokens: r.get(7)?,
                     total_cost_usd: r.get(8)?,
+                    server_cost_usd: r.get(9)?,
                 })
             })
             .context("run windsurf_sessions summary")?;

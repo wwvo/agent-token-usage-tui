@@ -277,6 +277,7 @@ fn draw_cascades(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "Turns",
         "Tokens",
         "Cost USD",
+        "Server $",
     ])
     .style(Style::default().add_modifier(Modifier::BOLD))
     .height(1);
@@ -289,9 +290,9 @@ fn draw_cascades(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     // Width budget reasoning: Last Seen (16) + Cascade (12, truncated
     // UUID) + Summary (flex, Min) + Workspace (28) + Model (16) + Turns
-    // (6) + Tokens (12) + Cost (12) fits a typical 120-col terminal with
-    // Summary taking the slack. Narrower terminals clip the flex column
-    // gracefully.
+    // (6) + Tokens (12) + Cost (12) + Server $ (12) fits a typical
+    // 130-col terminal with Summary taking the slack. Narrower
+    // terminals clip the flex column gracefully.
     let widths = [
         Constraint::Length(16),
         Constraint::Length(12),
@@ -299,6 +300,7 @@ fn draw_cascades(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Constraint::Length(28),
         Constraint::Length(16),
         Constraint::Length(6),
+        Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Length(12),
     ];
@@ -324,6 +326,18 @@ fn cascade_row(c: &WindsurfSessionSummary) -> Row<'_> {
     // `Last Seen` is always populated; we format to minute precision for
     // screen density. `Summary` is the Cascade's human-readable title —
     // the whole reason this view exists — so it gets the flex column.
+    //
+    // `Server $` renders as "—" when zero: a literal `$0.0000` would
+    // visually imply "Windsurf thinks this cost nothing", but the real
+    // meaning is "the exporter didn't capture a checkpoint cost for
+    // this cascade yet" (either no CHECKPOINT steps seen, or the
+    // v0.2.10 `extractCheckpointCost` heuristic didn't match the
+    // actual `metadata.modelCost` shape).
+    let server_cell = if c.server_cost_usd > 0.0 {
+        format_usd(c.server_cost_usd)
+    } else {
+        "—".to_string()
+    };
     Row::new(vec![
         Cell::from(c.last_seen.format("%Y-%m-%d %H:%M").to_string()),
         Cell::from(truncate(&c.cascade_id, 12)),
@@ -333,6 +347,7 @@ fn cascade_row(c: &WindsurfSessionSummary) -> Row<'_> {
         Cell::from(format_int(c.turns)),
         Cell::from(format_int(c.total_tokens)),
         Cell::from(format_usd(c.total_cost_usd)),
+        Cell::from(server_cell),
     ])
 }
 
