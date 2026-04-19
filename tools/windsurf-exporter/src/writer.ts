@@ -304,12 +304,28 @@ function extractTurnUsage(
         return null;
     }
 
+    // Timestamp fallback chain: production Windsurf step objects don't
+    // carry a per-step `timestamp` (the reference implementation in
+    // `windsurf-token-usage/src/api.ts` doesn't read one either — it
+    // displays only cascade-level times). Without a usable RFC-3339 the
+    // Rust collector's `windsurf.rs::parse_entry` drops the row entirely
+    // (see "turn_usage" branch). We degrade gracefully to the cascade's
+    // own timestamps so each turn at least lands in the right day bucket
+    // for the Trend view; per-turn resolution is best-effort.
+    //
+    // `||` (not `??`) on purpose: `step.timestamp` shows up as `""` in
+    // practice, not `undefined`. `??` would treat `""` as a real value
+    // and skip the fallback.
+    const timestamp =
+        step.timestamp ||
+        summary.lastUserInputTime ||
+        summary.lastModifiedTime ||
+        summary.createdTime ||
+        "";
+
     return {
-        timestamp: step.timestamp ?? "",
-        model:
-            step.metadata?.requestedModelUid ??
-            summary.lastGeneratorModelUid ??
-            "",
+        timestamp,
+        model: step.metadata?.requestedModelUid ?? summary.lastGeneratorModelUid ?? "",
         input_tokens: input,
         output_tokens: output,
         cached_input_tokens: cached,

@@ -26,6 +26,13 @@ export interface TrajectorySummary {
     createdTime?: string;
     /** ISO-8601 string. */
     lastModifiedTime?: string;
+    /**
+     * ISO-8601 string. Closest cascade-level proxy for "when did the last
+     * user_input turn happen?"; used as a per-turn `timestamp` fallback
+     * when the step itself doesn't expose one (always the case in
+     * production Windsurf builds).
+     */
+    lastUserInputTime?: string;
     /** Model UID the Cascade last generated a response with. */
     lastGeneratorModelUid?: string;
     /**
