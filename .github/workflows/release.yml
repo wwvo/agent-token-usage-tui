@@ -9,11 +9,15 @@
 # Trigger: any tag that looks like a semver release (`vX.Y.Z`, optionally
 # with `-<pre>` / `+<build>` suffixes). Push to a non-v* tag won't match.
 #
-# Matrix targets (only what we can realistically test):
-#   - x86_64-unknown-linux-gnu   (ubuntu-latest)
-#   - x86_64-pc-windows-msvc     (windows-latest)
-#   - x86_64-apple-darwin        (macos-13, Intel)
-#   - aarch64-apple-darwin       (macos-14, Apple Silicon)
+# Matrix targets:
+#   - x86_64-unknown-linux-gnu    (ubuntu-latest, native)
+#   - aarch64-unknown-linux-gnu   (ubuntu-latest, via `cross`)
+#   - x86_64-pc-windows-msvc      (windows-latest, native)
+#   - aarch64-pc-windows-msvc     (windows-latest, via MSVC amd64_arm64 toolchain)
+#   - aarch64-apple-darwin        (macos-14, Apple Silicon)
+#
+# `x86_64-apple-darwin` was dropped — macos-13 runners have long queues
+# and Intel Macs are no longer the mainstream user base.
 
 name: Release
 
@@ -34,6 +38,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   AGENT_TUI_DISABLE_LITELLM_DOWNLOAD: "1"
+  # Opt into Node.js 24 for actions/checkout + actions/upload-artifact
+  # to silence the Node 20 deprecation warnings on recent GHA runners.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
@@ -47,14 +54,21 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
             bin: agent-token-usage-tui
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            bin: agent-token-usage-tui
+            use_cross: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
             bin: agent-token-usage-tui.exe
-          - target: x86_64-apple-darwin
-            os: macos-13
-            archive: tar.gz
-            bin: agent-token-usage-tui
+            msvc_dev_cmd_arch: amd64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            bin: agent-token-usage-tui.exe
+            msvc_dev_cmd_arch: amd64_arm64
           - target: aarch64-apple-darwin
             os: macos-14
             archive: tar.gz
@@ -74,7 +88,34 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      - name: Build release binary
+      # `cross` enables aarch64-linux-gnu cross-compilation from an
+      # x86_64 runner without wrestling with apt sysroot indexes. The
+      # glibc target needs a matching C runtime and works cleanest
+      # through cross's Docker image.
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      # MSVC dev cmd plants the right `cl.exe` / `link.exe` on PATH.
+      # `amd64` is native on windows-latest; `amd64_arm64` selects VS's
+      # x86_64-host → ARM64-target cross toolchain, which pairs with
+      # the `aarch64-pc-windows-msvc` rustup target the step above
+      # already installed.
+      - name: Setup MSVC developer command prompt
+        if: endsWith(matrix.target, '-pc-windows-msvc')
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_dev_cmd_arch }}
+
+      - name: Build release binary (cross)
+        if: matrix.use_cross
+        shell: bash
+        run: cross build --profile dist --locked --target ${{ matrix.target }}
+
+      - name: Build release binary (cargo)
+        if: ${{ !matrix.use_cross }}
         shell: bash
         run: cargo build --profile dist --locked --target ${{ matrix.target }}
 
