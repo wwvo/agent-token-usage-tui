@@ -53,7 +53,7 @@ the commit history. The hand-curated release notes live in `CHANGELOG.md`.
 # Layout:
 #   ## [X.Y.Z] — YYYY-MM-DD
 #
-#   ### ✨ 新功能
+#   ### ✨ Added
 #
 #   - **(scope)** subject (`abc1234`)
 #   ...
@@ -106,7 +106,7 @@ render_always = true
 # Parse commits per the Conventional Commits spec.
 conventional_commits = true
 # Keep unconventional commits too; the catch-all parser at the bottom
-# of `commit_parsers` routes them to "🌀 其他" instead of dropping them
+# of `commit_parsers` routes them to "🌀 Other" instead of dropping them
 # on the floor. That means a human-authored CHANGELOG.md line is never
 # quietly lost if someone forgets the `feat:` prefix.
 filter_unconventional = false
@@ -136,34 +136,43 @@ commit_preprocessors = [
 # `feat!:` or a body containing `BREAKING CHANGE` always lands in the
 # dedicated 💥 section regardless of its type prefix.
 commit_parsers = [
-    { message = '^.+!:', group = "💥 破坏性变更" },
-    { body = 'BREAKING CHANGE', group = "💥 破坏性变更" },
+    { message = '^.+!:', group = "💥 Breaking Changes" },
+    # Catches a BREAKING CHANGE: / BREAKING-CHANGE: declaration at the
+    # start of any body/footer line (per Conventional Commits 1.0.0).
+    # `(?m)` anchors `^` to every newline, otherwise a prose mention
+    # like "handle the BREAKING CHANGE scenario" inside an explanation
+    # would false-positive into the 💥 bucket.
+    { body = '(?m)^BREAKING[ -]CHANGE:', group = "💥 Breaking Changes" },
 
-    { message = '^feat', group = "✨ 新功能" },
-    { message = '^fix', group = "🐛 Bug 修复" },
-    { message = '^perf', group = "⚡ 性能优化" },
-    { message = '^refactor', group = "♻ 重构" },
-    { message = '^docs', group = "📝 文档" },
-    { message = '^test', group = "✅ 测试" },
-    { message = '^style', group = "🎨 代码风格" },
-    { message = '^build', group = "📦 构建" },
-    { message = '^ci', group = "👷 CI / CD" },
+    # Conventional Commits types → Keep a Changelog-flavoured sections.
+    # Names stay English so the rendered CHANGELOG matches the upstream
+    # spec (https://keepachangelog.com/en/1.1.0/); emojis mirror the
+    # commit subject prefix so release notes keep a visual rhythm.
+    { message = '^feat', group = "✨ Added" },
+    { message = '^fix', group = "🐛 Fixed" },
+    { message = '^perf', group = "⚡ Performance" },
+    { message = '^refactor', group = "♻ Refactored" },
+    { message = '^docs', group = "📝 Documentation" },
+    { message = '^test', group = "✅ Tests" },
+    { message = '^style', group = "🎨 Styles" },
+    { message = '^build', group = "📦 Build" },
+    { message = '^ci', group = "👷 CI/CD" },
 
     # Release / dependency chores clutter human-facing notes; hide them.
     # Everything else under `chore` (tooling, housekeeping) still shows
     # up under the 🔧 bucket.
     { message = '^chore\(release\)', skip = true },
     { message = '^chore\(deps\)', skip = true },
-    { message = '^chore', group = "🔧 杂项" },
+    { message = '^chore', group = "🔧 Chore" },
 
-    { message = '^revert', group = "⏪ 回滚" },
+    { message = '^revert', group = "⏪ Reverts" },
 
     # Escape hatch: let contributors opt out of the changelog per-commit.
     # Added to the *commit footer*, e.g. `Footer:\nchangelog: ignore`.
     { footer = '^changelog: ?ignore', skip = true },
 
     # Catch-all. Keeps unconventional commits visible rather than silent.
-    { message = '.*', group = "🌀 其他" },
+    { message = '.*', group = "🌀 Other" },
 ]
 
 # `feat!:` style breaking markers already hoist to 💥; this flag extends
