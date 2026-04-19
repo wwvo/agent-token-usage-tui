@@ -8,6 +8,7 @@ use ratatui::layout::Alignment;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
+use ratatui::layout::Margin;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
@@ -19,6 +20,9 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Row;
+use ratatui::widgets::Scrollbar;
+use ratatui::widgets::ScrollbarOrientation;
+use ratatui::widgets::ScrollbarState;
 use ratatui::widgets::Sparkline;
 use ratatui::widgets::Table;
 use ratatui::widgets::TableState;
@@ -154,11 +158,10 @@ fn draw_sessions(frame: &mut Frame<'_>, area: Rect, app: &App) {
     .height(1);
 
     let rows: Vec<Row<'_>> = app.sessions_rows.iter().map(|s| session_row(s)).collect();
+    let row_count = rows.len();
 
     let mut state = TableState::default();
-    state.select(Some(
-        app.selected_sessions.min(rows.len().saturating_sub(1)),
-    ));
+    state.select(Some(app.selected_sessions.min(row_count.saturating_sub(1))));
 
     let widths = [
         Constraint::Length(20),
@@ -181,6 +184,32 @@ fn draw_sessions(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(table, area, &mut state);
+    draw_scrollbar(frame, area, row_count, app.selected_sessions);
+}
+
+/// Paint a vertical scrollbar inside the right edge of `area`.
+///
+/// Rendered only when `content_len > 0` — ratatui silently no-ops on empty
+/// ranges, but guarding explicitly saves an allocation and keeps the intent
+/// obvious. We use the selected row as `position`; this diverges slightly
+/// from ratatui's internal `TableState::offset` when the viewport is
+/// partially filled, but the visual is close enough to act as a "where am I
+/// in the list" indicator without tracking dual state.
+fn draw_scrollbar(frame: &mut Frame<'_>, area: Rect, content_len: usize, position: usize) {
+    if content_len == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(content_len).position(position);
+    // `Margin { vertical: 1, horizontal: 0 }` keeps the track inside the
+    // block's top/bottom borders; the bar sits flush with the right border.
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 0,
+    });
+    let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"));
+    frame.render_stateful_widget(bar, inner, &mut state);
 }
 
 fn session_row(s: &SessionSummary) -> Row<'_> {

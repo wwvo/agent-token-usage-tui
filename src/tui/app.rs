@@ -50,9 +50,13 @@ impl View {
 
 /// How many sessions we pull into the sessions view on each refresh.
 ///
-/// Kept intentionally small for the MVP — a scrolling/filtering pass lands
-/// in M6 polish.
-pub const SESSIONS_PAGE: usize = 200;
+/// `2_000` is a deliberate compromise: large enough that "scroll through
+/// the last quarter's work" is a viewport-scroll rather than a re-query,
+/// small enough that the initial SELECT stays under a millisecond on
+/// typical SQLite pages. True pagination (fetch-on-scroll) is a future
+/// optimization; for now the scrollbar + PageUp/PageDown keys make 2k
+/// rows navigable.
+pub const SESSIONS_PAGE: usize = 2_000;
 
 /// Window (in UTC days) for the Trend view.
 ///
@@ -132,14 +136,24 @@ impl App {
 
     /// Apply one keypress to the state machine.
     ///
+    /// `page_size` is the caller's best estimate of how many data rows fit
+    /// into the active view's viewport — the TUI loop computes it from
+    /// the terminal's current row count and passes it here so PageUp /
+    /// PageDown scroll **exactly one visible page**. A sensible fallback
+    /// is `10` (roughly the height of a small terminal minus chrome).
+    ///
     /// Returns `true` if the event was handled; `false` for genuinely unknown
     /// keys (we don't currently use the boolean but leaving it lets tests
     /// assert we did not accidentally consume an un-handled key).
-    pub fn on_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_key(&mut self, key: KeyEvent, page_size: usize) -> bool {
         // Skip key-release events on Windows (crossterm emits both by default).
         if matches!(key.kind, KeyEventKind::Release) {
             return false;
         }
+
+        // Clamp to 1 so PageDown always moves at least one row even on a
+        // zero-height terminal (e.g. when a unit test passes `0`).
+        let page = page_size.max(1);
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
@@ -168,6 +182,16 @@ impl App {
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.move_selection(-1);
+                true
+            }
+            KeyCode::PageDown => {
+                // saturating cast: page fits in i32 for every realistic
+                // terminal (> 2_000 rows is unreachable).
+                self.move_selection(i32::try_from(page).unwrap_or(i32::MAX));
+                true
+            }
+            KeyCode::PageUp => {
+                self.move_selection(-i32::try_from(page).unwrap_or(i32::MAX));
                 true
             }
             KeyCode::Char('g') | KeyCode::Home => {

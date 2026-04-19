@@ -39,6 +39,13 @@ fn release(code: KeyCode) -> KeyEvent {
     }
 }
 
+/// Default page size for tests that don't exercise PageUp / PageDown.
+///
+/// Production code derives this from the terminal's row count; `10` is a
+/// conservative stand-in that keeps PageDown moves distinguishable from
+/// single-row `j` moves.
+const PAGE: usize = 10;
+
 #[test]
 fn default_view_is_overview() {
     let app = new_app();
@@ -49,27 +56,27 @@ fn default_view_is_overview() {
 #[test]
 fn q_sets_should_quit() {
     let mut app = new_app();
-    assert!(app.on_key(press(KeyCode::Char('q'))));
+    assert!(app.on_key(press(KeyCode::Char('q')), PAGE));
     assert!(app.should_quit);
 }
 
 #[test]
 fn esc_sets_should_quit() {
     let mut app = new_app();
-    assert!(app.on_key(press(KeyCode::Esc)));
+    assert!(app.on_key(press(KeyCode::Esc), PAGE));
     assert!(app.should_quit);
 }
 
 #[test]
 fn number_keys_switch_views() {
     let mut app = new_app();
-    app.on_key(press(KeyCode::Char('2')));
+    app.on_key(press(KeyCode::Char('2')), PAGE);
     assert_eq!(app.view, View::Sessions);
-    app.on_key(press(KeyCode::Char('3')));
+    app.on_key(press(KeyCode::Char('3')), PAGE);
     assert_eq!(app.view, View::Models);
-    app.on_key(press(KeyCode::Char('4')));
+    app.on_key(press(KeyCode::Char('4')), PAGE);
     assert_eq!(app.view, View::Trend);
-    app.on_key(press(KeyCode::Char('1')));
+    app.on_key(press(KeyCode::Char('1')), PAGE);
     assert_eq!(app.view, View::Overview);
 }
 
@@ -77,7 +84,7 @@ fn number_keys_switch_views() {
 fn key_release_events_are_ignored() {
     let mut app = new_app();
     // A release of 'q' must NOT quit; only the press does.
-    assert!(!app.on_key(release(KeyCode::Char('q'))));
+    assert!(!app.on_key(release(KeyCode::Char('q')), PAGE));
     assert!(!app.should_quit);
 }
 
@@ -106,27 +113,27 @@ fn jk_navigation_on_overview_clamps_at_edges() {
 
     // Four 'j' presses move us to the last row.
     for _ in 0..10 {
-        app.on_key(press(KeyCode::Char('j')));
+        app.on_key(press(KeyCode::Char('j')), PAGE);
     }
     assert_eq!(app.selected_overview, 4);
 
     // 'k' moves us back up.
-    app.on_key(press(KeyCode::Char('k')));
+    app.on_key(press(KeyCode::Char('k')), PAGE);
     assert_eq!(app.selected_overview, 3);
 
     // 'g' jumps to the top.
-    app.on_key(press(KeyCode::Char('g')));
+    app.on_key(press(KeyCode::Char('g')), PAGE);
     assert_eq!(app.selected_overview, 0);
 
     // 'G' jumps to the bottom.
-    app.on_key(press(KeyCode::Char('G')));
+    app.on_key(press(KeyCode::Char('G')), PAGE);
     assert_eq!(app.selected_overview, 4);
 }
 
 #[test]
 fn r_key_sets_refresh_footer() {
     let mut app = new_app();
-    app.on_key(press(KeyCode::Char('r')));
+    app.on_key(press(KeyCode::Char('r')), PAGE);
     assert_eq!(app.footer.as_deref(), Some("refreshed"));
 }
 
@@ -136,7 +143,7 @@ fn enter_on_overview_switches_to_sessions_filtered() {
     // state transitions: view → Sessions, footer set, selection reset.
     let mut app = new_app();
     app.refresh();
-    app.on_key(press(KeyCode::Enter));
+    app.on_key(press(KeyCode::Enter), PAGE);
     assert_eq!(app.view, View::Sessions);
     assert!(
         app.footer
@@ -149,7 +156,7 @@ fn enter_on_overview_switches_to_sessions_filtered() {
 fn selection_does_not_move_on_empty_table() {
     let mut app = new_app();
     // No refresh → overview_rows empty. 'j' must not panic or move.
-    app.on_key(press(KeyCode::Char('j')));
+    app.on_key(press(KeyCode::Char('j')), PAGE);
     assert_eq!(app.selected_overview, 0);
 }
 
@@ -176,10 +183,53 @@ fn jk_on_trend_is_noop_and_does_not_panic() {
     // Trend has no selection semantics; j / k must be harmless no-ops.
     let mut app = new_app();
     app.refresh();
-    app.on_key(press(KeyCode::Char('4')));
+    app.on_key(press(KeyCode::Char('4')), PAGE);
     assert_eq!(app.view, View::Trend);
-    app.on_key(press(KeyCode::Char('j')));
-    app.on_key(press(KeyCode::Char('k')));
+    app.on_key(press(KeyCode::Char('j')), PAGE);
+    app.on_key(press(KeyCode::Char('k')), PAGE);
     // Still Trend, still no panic.
     assert_eq!(app.view, View::Trend);
+}
+
+#[test]
+fn page_down_jumps_by_page_size_on_overview() {
+    // 5 Source variants after refresh → PageDown with page=3 should land
+    // on row 3, not bottom. This proves PageDown honours the page arg
+    // rather than jumping to the bottom like `G`.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::PageDown), 3);
+    assert_eq!(app.selected_overview, 3);
+    // Second PageDown clamps at the last row.
+    app.on_key(press(KeyCode::PageDown), 3);
+    assert_eq!(app.selected_overview, 4);
+}
+
+#[test]
+fn page_up_mirrors_page_down() {
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('G')), PAGE); // bottom (4)
+    app.on_key(press(KeyCode::PageUp), 2);
+    assert_eq!(app.selected_overview, 2);
+    app.on_key(press(KeyCode::PageUp), 2);
+    assert_eq!(app.selected_overview, 0);
+}
+
+#[test]
+fn page_down_with_zero_page_clamp_still_advances_one_row() {
+    // A zero-height terminal is a pathological but realistic edge; we
+    // must advance at least one row so the user never feels the key did
+    // nothing.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::PageDown), 0);
+    assert_eq!(app.selected_overview, 1);
+}
+
+#[test]
+fn sessions_page_constant_is_generous() {
+    // Regression guard: we lifted the Sessions cap from 200 to 2_000 to
+    // enable scrollbar-based browsing. Don't silently shrink it again.
+    const { assert!(super::SESSIONS_PAGE >= 2_000) };
 }

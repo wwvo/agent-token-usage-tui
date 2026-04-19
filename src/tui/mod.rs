@@ -69,7 +69,16 @@ async fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, db: Db) -> 
             // Only key events drive state; resize / mouse / focus etc. are
             // handled implicitly by the next `terminal.draw` call.
             if let Event::Key(k) = event_read().context("crossterm read")? {
-                app.on_key(k);
+                // `page_size` = terminal body rows minus tabs(1) / footer(2) /
+                // table header(1) / table borders(2). `terminal.size()` is
+                // authoritative; fall back to a conservative 10 if the call
+                // fails (it almost never does).
+                let page_size = terminal
+                    .size()
+                    .map(|s| usize::from(s.height.saturating_sub(6)))
+                    .unwrap_or(10)
+                    .max(1);
+                app.on_key(k, page_size);
             }
         }
     }
