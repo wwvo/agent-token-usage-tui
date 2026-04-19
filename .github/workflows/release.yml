@@ -226,6 +226,21 @@ jobs:
 
           git cliff --latest -o "${notes}"
 
+          # Strip the file-level "# Changelog" header + description
+          # paragraph and the "## [X.Y.Z] — YYYY-MM-DD" version heading
+          # from the rendered notes. Both are redundant on the Release
+          # page: the page title IS the tag name, and CHANGELOG.md in
+          # the repo owns the file-level header/links. We only want
+          # the per-group sections (### ✨ Added, ### 🐛 Fixed, ...)
+          # plus the git-cliff footer comment.
+          #
+          # Changing `[changelog].header` in cliff.toml would also
+          # affect the committed CHANGELOG.md, so the trim happens
+          # here in the CI post-process instead.
+          awk 'started || /^### /; /^### / { started = 1 }' \
+            "${notes}" > "${notes}.stripped"
+          mv "${notes}.stripped" "${notes}"
+
           # Previous tag in version-sort order. `awk` skips over the
           # current tag so the calculation works even if multiple
           # release workflows happened to interleave locally.
