@@ -60,6 +60,21 @@ export interface CascadeStep {
 export interface CascadeStepMetadata {
     /** Model UID the user asked for (may differ from `lastGeneratorModelUid`). */
     requestedModelUid?: string;
+    /**
+     * ISO-8601 step creation time, nanosecond precision in practice
+     * (`2026-04-20T01:23:45.678901234Z`). Present on every step we've
+     * ever seen in a production Windsurf build; still typed optional
+     * because we don't want a single missing field to take the whole
+     * refresh down.
+     */
+    createdAt?: string;
+    /**
+     * Server-assigned UUID per step. Stable across refreshes, so we
+     * prefer it over our synthetic `turn-<N>` counter for new files.
+     * Existing files stick with the counter to stay backward compatible
+     * with the on-disk rows the collector has already ingested.
+     */
+    executionId?: string;
     /** Grouped dimension list; we only read the `Token Usage` group. */
     responseDimensionGroups?: ReadonlyArray<ResponseDimensionGroup>;
 }

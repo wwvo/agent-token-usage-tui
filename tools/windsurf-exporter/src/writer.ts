@@ -10,15 +10,17 @@
 //    but the Rust side treats the first-seen values as canonical — any
 //    drift is absorbed into the dashboard's best-effort UX, not the
 //    schema.
-// 2. Every subsequent line is a `turn_usage` object whose `step_id` is a
-//    *synthetic* `"turn-<N>"` counter (N = position among successfully-
-//    extracted user_input turns within this cascade, starting at 0).
-//    Windsurf's Cascade step objects don't expose a stable per-step id
-//    (we learned this the hard way; see commit log for `step.id`), so we
-//    dedup off the cascade-local turn index instead. Cascade trajectories
-//    are append-only histories — the Nth user_input step in this refresh
-//    is always the same physical turn as the Nth on every future refresh
-//    — so synthetic ids align perfectly with on-disk rows.
+// 2. Every subsequent line is a `turn_usage` object. Its `step_id` is
+//    either the server-assigned UUID from `step.metadata.executionId`
+//    (preferred for files newly created on ≥ v0.2.10) or the synthetic
+//    `"turn-<N>"` counter used by v0.2.9 and earlier (N = position
+//    among successfully-extracted user_input turns within this cascade,
+//    starting at 0). `writeSession` picks one style *per file*: if the
+//    file already has synthetic ids on disk we keep appending synthetic
+//    ones so a mid-life exporter upgrade doesn't double-write rows the
+//    Rust collector has already ingested. Either id is stable across
+//    refreshes, so the collector's `(cascade_id, step_id)` dedup
+//    behaves identically.
 // 3. Writes are append-only with a trailing `\n`. Partial-write recovery
 //    is left to the OS — a crash mid-write leaves at most one mangled
 //    trailing line that the collector ignores (`serde_json::from_str`
@@ -203,12 +205,18 @@ export function writeSession(
         stats.sessionMetaWritten = true;
     }
 
-    // `stepIds.size` = the number of `turn_usage` lines already on disk
-    // for this cascade. Each line carries a synthetic `turn-<N>` id
-    // assigned in strictly increasing order, so the on-disk set is
-    // exactly `{turn-0, turn-1, …, turn-(N-1)}`. We use the size as
-    // the "how many valid turns have we already flushed?" counter and
-    // skip that many before appending.
+    // Pick an id style per file, not per run:
+    // - `synthetic` — the file already has `turn-<N>` rows from a
+    //   pre-v0.2.10 exporter. Keep appending the same shape so the
+    //   Rust collector's `(cascade_id, step_id)` dedup doesn't see
+    //   every old row "migrate" into a duplicate new UUID row.
+    // - `uuid` — file is brand new, or every existing row is already
+    //   a UUID. Prefer `step.metadata.executionId`. If a particular
+    //   step happens to be missing one (shouldn't happen in practice,
+    //   but we don't crash on it), fall back to synthetic for that row
+    //   only; mixing is safe since both ids are unique.
+    const idStyle = detectIdStyle(stepIds);
+
     let validTurnsSoFar = 0;
     for (const step of steps) {
         const partial = extractTurnUsage(step, summary);
@@ -216,27 +224,46 @@ export function writeSession(
             stats.turnsIgnored++;
             continue;
         }
-        // Previous refreshes already wrote the first `stepIds.size` valid
-        // turns; walk past them. `validTurnsSoFar` bumps only on non-null
-        // partials so ignored steps don't shift the index.
-        if (validTurnsSoFar < stepIds.size) {
-            validTurnsSoFar++;
+        const syntheticId = `turn-${validTurnsSoFar}`;
+        const uuidId = step.metadata?.executionId;
+        const chosenId =
+            idStyle === "synthetic" ? syntheticId : (uuidId ?? syntheticId);
+        // Idempotent: if this id is already on disk, skip. Works whether
+        // the id is synthetic (v0.2.9 carry-over) or UUID (v0.2.10+).
+        if (stepIds.has(chosenId)) {
             stats.turnsSkipped++;
+            validTurnsSoFar++;
             continue;
         }
-        const syntheticId = `turn-${validTurnsSoFar}`;
         const line: TurnUsageLine = {
             type: "turn_usage",
-            step_id: syntheticId,
+            step_id: chosenId,
             ...partial,
         };
         fs.appendFileSync(filePath, `${JSON.stringify(line)}\n`, "utf8");
-        stepIds.add(syntheticId);
+        stepIds.add(chosenId);
         stats.turnsInserted++;
         validTurnsSoFar++;
     }
 
     return stats;
+}
+
+/**
+ * Decide whether to keep writing synthetic `turn-<N>` ids (because the
+ * file was started by a pre-v0.2.10 exporter) or switch to UUID ids.
+ *
+ * Iterates `stepIds` once, short-circuits on the first synthetic match.
+ * An empty set — i.e. a brand-new file — is treated as "uuid" so new
+ * files pick up the cleaner id style immediately.
+ */
+function detectIdStyle(stepIds: Set<string>): "synthetic" | "uuid" {
+    for (const id of stepIds) {
+        if (/^turn-\d+$/.test(id)) {
+            return "synthetic";
+        }
+    }
+    return "uuid";
 }
 
 // ---- Internal: step → TurnUsageLine --------------------------------------
@@ -304,19 +331,23 @@ function extractTurnUsage(
         return null;
     }
 
-    // Timestamp fallback chain: production Windsurf step objects don't
-    // carry a per-step `timestamp` (the reference implementation in
-    // `windsurf-token-usage/src/api.ts` doesn't read one either — it
-    // displays only cascade-level times). Without a usable RFC-3339 the
-    // Rust collector's `windsurf.rs::parse_entry` drops the row entirely
-    // (see "turn_usage" branch). We degrade gracefully to the cascade's
-    // own timestamps so each turn at least lands in the right day bucket
-    // for the Trend view; per-turn resolution is best-effort.
+    // Timestamp resolution, preferred → fallback:
+    // 1. `step.metadata.createdAt` — per-step, nanosecond precision,
+    //    present on every production step observed during the v0.2.9
+    //    retention probe. This is what lets the TUI's Trend view land
+    //    each turn in its own hour bucket instead of bunching every turn
+    //    in a cascade at `lastUserInputTime`.
+    // 2. `step.timestamp` — unused in production (always `""`); kept
+    //    because it's cheap and future-proofs against a field rename.
+    // 3. cascade-level times — per-cascade granularity, good enough to
+    //    keep the row alive through the Rust collector's RFC-3339 check
+    //    (`windsurf.rs::parse_entry` drops rows with empty timestamps).
     //
-    // `||` (not `??`) on purpose: `step.timestamp` shows up as `""` in
+    // `||` (not `??`) on purpose: these fields show up as `""` in
     // practice, not `undefined`. `??` would treat `""` as a real value
     // and skip the fallback.
     const timestamp =
+        step.metadata?.createdAt ||
         step.timestamp ||
         summary.lastUserInputTime ||
         summary.lastModifiedTime ||
@@ -325,7 +356,10 @@ function extractTurnUsage(
 
     return {
         timestamp,
-        model: step.metadata?.requestedModelUid ?? summary.lastGeneratorModelUid ?? "",
+        model:
+            step.metadata?.requestedModelUid ??
+            summary.lastGeneratorModelUid ??
+            "",
         input_tokens: input,
         output_tokens: output,
         cached_input_tokens: cached,
