@@ -43,7 +43,27 @@ const PRICING_FRESHNESS: chrono::Duration = chrono::Duration::hours(24);
     name = env!("CARGO_PKG_NAME"),
     version,
     about,
-    long_about = None,
+    long_about = "\
+Terminal dashboard and one-shot scanner for agentic coding-tool token usage.
+
+Running `atut` with no subcommand launches the TUI dashboard. The TUI primes \
+itself by syncing litellm pricing (24h cache) and scanning every supported \
+agent's session files, then hands a SQLite-backed read model to a k9s-style \
+UI. Both priming steps are best-effort and skipped on failure so the \
+dashboard still opens.
+
+Portable runtime: the database, logs, and config live next to the \
+executable by default (`<exe-dir>/data.db`, `<exe-dir>/logs/`, \
+`<exe-dir>/config.toml`). Override with `--data-dir` for sandboxed runs.
+
+Examples:
+  atut                  # launch the TUI (prime pricing + scan first)
+  atut --no-scan        # TUI without the initial scan (use existing DB)
+  atut --no-prices      # TUI without hitting the network
+  atut scan             # run scanners, print a one-line-per-source summary
+  atut sync-prices      # refresh pricing cache and reprice zero-cost rows
+  atut -v scan          # debug logs to stderr alongside the scan
+",
 )]
 #[allow(dead_code)]
 pub struct Cli {
@@ -77,14 +97,39 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Scan known agent session directories, update the database, and exit.
-    ///
-    /// Intended for cron / scheduled invocation where a TUI is inappropriate.
+    #[command(long_about = "\
+Scan known agent session directories, update the database, and exit.
+
+Intended for cron / scheduled invocation where a TUI is inappropriate. \
+Uses the same pipeline as the TUI's startup scan; dedup on per-file offsets \
+makes repeated runs safe and cheap. Prints a compact one-line-per-source \
+summary (files scanned, records / prompts / sessions inserted, errors) to \
+stdout.
+
+Examples:
+  atut scan                          # scan every enabled collector
+  atut --data-dir /tmp/t scan        # scan into an isolated sandbox
+  atut -v scan                       # with debug logs on stderr
+")]
     Scan,
 
     /// Refresh the litellm model pricing cache and recompute costs, then exit.
+    #[command(long_about = "\
+Refresh the litellm model pricing cache and recompute costs for any usage \
+rows that still have zero cost.
+
+Short-circuits when the on-disk cache is younger than 24h. On network \
+failure, falls back to the pricing snapshot embedded in the binary at \
+build time — the command never hard-fails due to offline machines. After \
+the sync, rows with `cost_usd = 0` are re-priced in place.
+
+Examples:
+  atut sync-prices                   # refresh pricing and reprice rows
+  atut --data-dir /tmp/t sync-prices # sync into an isolated sandbox
+")]
     SyncPrices,
 
-    /// Print version information and exit.
+    /// Print version, build commit, build date, and MSRV, then exit.
     Version,
 }
 
