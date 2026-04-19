@@ -131,6 +131,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 `plans/agent-token-usage-tui-architecture-77d40b.md` §13 for the design.
 
+## Development
+
+Common tasks live in a [`justfile`](./justfile); install
+[`just`](https://github.com/casey/just) then:
+
+```bash
+just              # list every recipe
+just fmt-check    # what CI runs
+just clippy       # strict clippy gate (-D warnings)
+just test         # full test suite
+just run -- scan  # cargo run with args forwarded
+just ci           # fmt-check + clippy + test (local CI parity)
+```
+
+Without `just`, run the underlying `cargo` commands directly; the
+justfile is a convenience layer, not a requirement.
+
 ## Contributing
 
 Start with [`AGENTS.md`](./AGENTS.md) — it covers code style, commit
