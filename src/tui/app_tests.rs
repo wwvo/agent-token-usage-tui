@@ -326,3 +326,129 @@ fn cycle_trend_window_method_is_independent_of_keybinding() {
     app.cycle_trend_window();
     assert_eq!(app.trend_window_days, super::TREND_WINDOW_DAYS);
 }
+
+// ---- Cascades view --------------------------------------------------------
+
+#[test]
+fn cascades_is_not_in_the_tab_bar() {
+    // Regression guard: Cascades is reachable via `c` / Enter but must
+    // not inflate `View::all()` — the tab bar should stay at four slots
+    // so the `1 / 2 / 3 / 4` shortcut keys remain unambiguous.
+    let all = View::all();
+    assert_eq!(all.len(), 4);
+    assert!(
+        !all.contains(&View::Cascades),
+        "Cascades leaked into the tab bar; keys 1-4 would become ambiguous",
+    );
+}
+
+#[test]
+fn c_key_switches_to_cascades_from_any_view() {
+    // `c` is a global shortcut. Exercise it from every tab view so we
+    // don't inadvertently scope it to one in the future.
+    for starting in View::all() {
+        let mut app = new_app();
+        app.view = starting;
+        assert!(app.on_key(press(KeyCode::Char('c')), PAGE));
+        assert_eq!(
+            app.view,
+            View::Cascades,
+            "c from {starting:?} must land on Cascades",
+        );
+    }
+}
+
+#[test]
+fn refresh_populates_cascade_rows_even_on_empty_db() {
+    // Empty DB → zero cascades; the field still gets initialized to
+    // `Vec::new()` (not left uninitialized), matching every other view's
+    // refresh contract.
+    let mut app = new_app();
+    app.refresh();
+    assert!(app.cascade_rows.is_empty());
+    assert_eq!(app.selected_cascades, 0);
+}
+
+#[test]
+fn enter_on_overview_windsurf_row_drills_to_cascades() {
+    // The Overview row for Windsurf always renders (fetch_source_tallies
+    // zero-fills all sources), so we can select it deterministically
+    // after a refresh regardless of whether any usage rows exist.
+    let mut app = new_app();
+    app.refresh();
+
+    // Sources are emitted in `Source::all()` order. Find Windsurf's idx
+    // so the test doesn't break if that order ever changes.
+    let idx = app
+        .overview_rows
+        .iter()
+        .position(|t| t.source == crate::domain::Source::Windsurf)
+        .expect("Windsurf row must exist in zero-filled overview");
+    app.selected_overview = idx;
+
+    assert!(app.on_key(press(KeyCode::Enter), PAGE));
+    assert_eq!(
+        app.view,
+        View::Cascades,
+        "Windsurf Enter must open Cascades"
+    );
+    assert_eq!(app.selected_cascades, 0);
+    assert!(
+        app.footer
+            .as_deref()
+            .is_some_and(|s| s.contains("windsurf")),
+        "footer should announce the drill target; got {:?}",
+        app.footer,
+    );
+}
+
+#[test]
+fn enter_on_overview_non_windsurf_row_still_drills_to_sessions() {
+    // Contract preservation: drilling into Claude / Codex / OpenClaw /
+    // OpenCode must keep its existing Sessions-filter behavior; only
+    // Windsurf is special-cased.
+    let mut app = new_app();
+    app.refresh();
+    let idx = app
+        .overview_rows
+        .iter()
+        .position(|t| t.source == crate::domain::Source::Claude)
+        .expect("Claude row must exist");
+    app.selected_overview = idx;
+
+    app.on_key(press(KeyCode::Enter), PAGE);
+    assert_eq!(app.view, View::Sessions);
+    assert!(
+        app.footer
+            .as_deref()
+            .is_some_and(|s| s.starts_with("filter: source=")),
+        "footer={:?}",
+        app.footer,
+    );
+}
+
+#[test]
+fn enter_on_cascades_is_unhandled() {
+    // Cascades is a terminal view — it already contains every column
+    // the per-session Sessions view would show for a single cascade, so
+    // we don't burn a drill action on redundant data.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('c')), PAGE);
+    assert_eq!(app.view, View::Cascades);
+    assert!(!app.on_key(press(KeyCode::Enter), PAGE));
+    assert_eq!(app.view, View::Cascades, "Enter must not change view");
+}
+
+#[test]
+fn jk_on_empty_cascades_view_is_noop() {
+    // Empty DB → zero cascade_rows → j / k must be harmless no-ops,
+    // not panic or shift `selected_cascades` to a bogus index.
+    let mut app = new_app();
+    app.refresh();
+    app.on_key(press(KeyCode::Char('c')), PAGE);
+    assert_eq!(app.selected_cascades, 0);
+    app.on_key(press(KeyCode::Char('j')), PAGE);
+    app.on_key(press(KeyCode::Char('k')), PAGE);
+    assert_eq!(app.selected_cascades, 0);
+}

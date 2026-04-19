@@ -15,6 +15,7 @@ use crate::storage::Db;
 use crate::storage::ModelTally;
 use crate::storage::SessionSummary;
 use crate::storage::SourceTally;
+use crate::storage::WindsurfSessionSummary;
 
 /// Which screen the user is currently looking at.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,10 +28,17 @@ pub enum View {
     Models,
     /// 7-day cost + tokens sparkline.
     Trend,
+    /// Windsurf per-cascade drill-down (reads `windsurf_sessions`).
+    ///
+    /// Deliberately **not** in [`View::all`]: Cascades is source-specific
+    /// and wouldn't earn its keep as a top-level tab on machines that
+    /// never run Windsurf. Reachable via `c` from any view and via
+    /// `Enter` on the Windsurf row of Overview.
+    Cascades,
 }
 
 impl View {
-    /// Title shown in the tab bar.
+    /// Title shown in the tab bar / Cascades banner.
     #[must_use]
     pub const fn title(&self) -> &'static str {
         match self {
@@ -38,10 +46,13 @@ impl View {
             Self::Sessions => "Sessions",
             Self::Models => "Models",
             Self::Trend => "Trend",
+            Self::Cascades => "Cascades",
         }
     }
 
     /// Declared order for the tab bar; also drives the `1 / 2 / 3 / 4` shortcut keys.
+    ///
+    /// Cascades is intentionally absent — see the variant's doc comment.
     #[must_use]
     pub const fn all() -> [Self; 4] {
         [Self::Overview, Self::Sessions, Self::Models, Self::Trend]
@@ -80,9 +91,14 @@ pub struct App {
     pub sessions_rows: Vec<SessionSummary>,
     pub model_rows: Vec<ModelTally>,
     pub trend_rows: Vec<DailyTotal>,
+    /// Windsurf per-cascade rollup rows, fed by
+    /// `Db::fetch_windsurf_sessions_summary`. Ordered by `last_seen DESC`
+    /// so the Cascades view shows newest cascades first.
+    pub cascade_rows: Vec<WindsurfSessionSummary>,
     pub selected_overview: usize,
     pub selected_sessions: usize,
     pub selected_models: usize,
+    pub selected_cascades: usize,
     /// Active Trend window length in days. Cycled by the `w` key between
     /// [`TREND_WINDOW_DAYS`] and [`TREND_WINDOW_DAYS_WIDE`]; the render
     /// path reads it so the bar chart + daily table stay consistent with
@@ -103,9 +119,11 @@ impl App {
             sessions_rows: Vec::new(),
             model_rows: Vec::new(),
             trend_rows: Vec::new(),
+            cascade_rows: Vec::new(),
             selected_overview: 0,
             selected_sessions: 0,
             selected_models: 0,
+            selected_cascades: 0,
             trend_window_days: TREND_WINDOW_DAYS,
             should_quit: false,
             footer: None,
@@ -136,6 +154,16 @@ impl App {
         match self.db.fetch_daily_totals(self.trend_window_days) {
             Ok(rows) => self.trend_rows = rows,
             Err(e) => self.footer = Some(format!("refresh trend: {e:#}")),
+        }
+        // Same page budget as Sessions: users rarely have more than a few
+        // hundred cascades per machine; 2_000 leaves head-room for power
+        // users while keeping the `SELECT ... JOIN usage_records` fast.
+        match self.db.fetch_windsurf_sessions_summary(SESSIONS_PAGE) {
+            Ok(rows) => {
+                self.cascade_rows = rows;
+                self.clamp_selection();
+            }
+            Err(e) => self.footer = Some(format!("refresh cascades: {e:#}")),
         }
     }
 
@@ -248,26 +276,43 @@ impl App {
                 self.cycle_trend_window();
                 true
             }
+            // `c` jumps to the Windsurf-specific per-cascade drill-down
+            // from any view. We don't give it a tab slot (see
+            // `View::all`) but a letter shortcut keeps it discoverable
+            // alongside the numeric tab keys.
+            KeyCode::Char('c') => {
+                self.view = View::Cascades;
+                true
+            }
             KeyCode::Enter => self.handle_enter(),
             _ => false,
         }
     }
 
-    /// Handle Enter: drill from the current view into Sessions with a filter.
+    /// Handle Enter: drill from the current view into a filtered target.
     ///
-    /// Two drill paths today:
-    /// - Overview → Sessions filtered by the highlighted source.
+    /// Drill paths today:
+    /// - Overview → Cascades when the highlighted row is Windsurf (the
+    ///   per-cascade breakdown is strictly richer than the per-session
+    ///   one for Windsurf because every cascade is a single session).
+    /// - Overview → Sessions filtered by source for every other source.
     /// - Models → Sessions filtered by the highlighted model (scope: any
     ///   session that ever used that model, decorated with model-scoped
     ///   totals so the numbers answer "what did *this* model cost here").
     ///
     /// Returns `true` if the key was handled; `false` for views that don't
-    /// define an Enter action (Sessions / Trend) so callers know to fall
-    /// back to the default path.
+    /// define an Enter action (Sessions / Trend / Cascades) so callers
+    /// know to fall back to the default path.
     fn handle_enter(&mut self) -> bool {
         match self.view {
             View::Overview => {
                 if let Some(src) = self.selected_overview_source() {
+                    if src == Source::Windsurf {
+                        self.view = View::Cascades;
+                        self.selected_cascades = 0;
+                        self.footer = Some("drill: windsurf cascades".to_string());
+                        return true;
+                    }
                     match self.db.fetch_recent_sessions(Some(src), SESSIONS_PAGE) {
                         Ok(rows) => {
                             self.sessions_rows = rows;
@@ -300,7 +345,7 @@ impl App {
                 }
                 true
             }
-            View::Sessions | View::Trend => false,
+            View::Sessions | View::Trend | View::Cascades => false,
         }
     }
 
@@ -311,6 +356,7 @@ impl App {
             View::Models => self.model_rows.len(),
             // Trend is a chart, not a list — j/k still no-op via zero len.
             View::Trend => 0,
+            View::Cascades => self.cascade_rows.len(),
         }
     }
 
@@ -321,6 +367,7 @@ impl App {
             View::Models => &mut self.selected_models,
             // Unused for Trend but still needs a valid mut ref.
             View::Trend => &mut self.selected_overview,
+            View::Cascades => &mut self.selected_cascades,
         }
     }
 
@@ -351,6 +398,8 @@ impl App {
         self.selected_sessions = self.selected_sessions.min(max_sessions);
         let max_models = self.model_rows.len().saturating_sub(1);
         self.selected_models = self.selected_models.min(max_models);
+        let max_cascades = self.cascade_rows.len().saturating_sub(1);
+        self.selected_cascades = self.selected_cascades.min(max_cascades);
     }
 }
 

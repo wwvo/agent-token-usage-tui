@@ -35,6 +35,7 @@ use crate::storage::DailyTotal;
 use crate::storage::ModelTally;
 use crate::storage::SessionSummary;
 use crate::storage::SourceTally;
+use crate::storage::WindsurfSessionSummary;
 
 // ---- Color policy ---------------------------------------------------------
 
@@ -88,6 +89,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         View::Trend => draw_trend(frame, chunks[1], app),
         View::Sessions => draw_sessions(frame, chunks[1], app),
         View::Models => draw_models(frame, chunks[1], app),
+        View::Cascades => draw_cascades(frame, chunks[1], app),
     }
     draw_footer(frame, chunks[2], app);
 }
@@ -118,11 +120,11 @@ fn draw_tabs(frame: &mut Frame<'_>, area: Rect, app: &App) {
 // ---- Footer ---------------------------------------------------------------
 
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    // `w` is Trend-only today; advertising it in every view's footer is
-    // still the simplest path — the hint bar is already a dense pile of
-    // keybindings and users don't expect every key to work everywhere.
-    let hints =
-        "q/Esc quit  1/2/3/4 view  j/k move  g/G top/bottom  Enter drill-in  r refresh  w window";
+    // `w` is Trend-only and `c` jumps to Cascades; advertising both in
+    // every view's footer is still the simplest path — the hint bar is
+    // already a dense pile of keybindings and users don't expect every
+    // key to work everywhere.
+    let hints = "q/Esc quit  1/2/3/4 view  c cascades  j/k move  g/G top/bottom  Enter drill-in  r refresh  w window";
     let msg = app.footer.as_deref().unwrap_or("");
     let line = Line::from(vec![
         Span::styled(hints, Style::default().maybe_fg(Color::DarkGray)),
@@ -260,6 +262,77 @@ fn session_row(s: &SessionSummary) -> Row<'_> {
         Cell::from(format_int(s.records)),
         Cell::from(format_int(s.total_tokens)),
         Cell::from(format_usd(s.total_cost_usd)),
+    ])
+}
+
+// ---- Cascades view --------------------------------------------------------
+
+fn draw_cascades(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let header = Row::new(vec![
+        "Last Seen",
+        "Cascade",
+        "Summary",
+        "Workspace",
+        "Model",
+        "Turns",
+        "Tokens",
+        "Cost USD",
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD))
+    .height(1);
+
+    let rows: Vec<Row<'_>> = app.cascade_rows.iter().map(|c| cascade_row(c)).collect();
+    let row_count = rows.len();
+
+    let mut state = TableState::default();
+    state.select(Some(app.selected_cascades.min(row_count.saturating_sub(1))));
+
+    // Width budget reasoning: Last Seen (16) + Cascade (12, truncated
+    // UUID) + Summary (flex, Min) + Workspace (28) + Model (16) + Turns
+    // (6) + Tokens (12) + Cost (12) fits a typical 120-col terminal with
+    // Summary taking the slack. Narrower terminals clip the flex column
+    // gracefully.
+    let widths = [
+        Constraint::Length(16),
+        Constraint::Length(12),
+        Constraint::Min(24),
+        Constraint::Length(28),
+        Constraint::Length(16),
+        Constraint::Length(6),
+        Constraint::Length(12),
+        Constraint::Length(12),
+    ];
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Windsurf Cascades "),
+        )
+        .row_highlight_style(
+            Style::default()
+                .maybe_bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    frame.render_stateful_widget(table, area, &mut state);
+    draw_scrollbar(frame, area, row_count, app.selected_cascades);
+}
+
+fn cascade_row(c: &WindsurfSessionSummary) -> Row<'_> {
+    // `Last Seen` is always populated; we format to minute precision for
+    // screen density. `Summary` is the Cascade's human-readable title —
+    // the whole reason this view exists — so it gets the flex column.
+    Row::new(vec![
+        Cell::from(c.last_seen.format("%Y-%m-%d %H:%M").to_string()),
+        Cell::from(truncate(&c.cascade_id, 12)),
+        Cell::from(truncate(&c.summary, 40)),
+        Cell::from(truncate(&c.workspace, 28)),
+        Cell::from(truncate(&c.last_model, 16)),
+        Cell::from(format_int(c.turns)),
+        Cell::from(format_int(c.total_tokens)),
+        Cell::from(format_usd(c.total_cost_usd)),
     ])
 }
 
