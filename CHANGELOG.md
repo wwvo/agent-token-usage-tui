@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-19
+
+CI hotfix release. No functional changes beyond the pipeline repairs
+needed to actually ship `v0.2.0`'s artifacts.
+
+### Fixed
+
+- **cnb release package stage**: `set -euo pipefail` is a bash-ism; the
+  cnb runner's default shell is dash, which rejected it with
+  `sh: 1: set: Illegal option -o pipefail`. Both arch legs now use
+  `set -eu` (no pipes are involved, so `pipefail` was pure dead weight).
+- **clippy `collapsible_match`**: two nested `match ... => { if ... }`
+  sites in `src/collector/claude.rs` and `src/collector/openclaw.rs`
+  now use match arm guards. The lint is older than `v0.1.0` but the
+  cnb runner's stable clippy floor raised past where we'd been lint-
+  testing locally, so this is the same code surface, new lint version.
+
+### Known limitations
+
+- The `v0.2.0` tag remains on `origin` as a historical no-artifact
+  release. `v0.2.1` is the first usable tarball release of the
+  `v0.2.x` line.
+
 ## [0.2.0] — 2026-04-19
 
 Windsurf support + TUI polish release.
@@ -134,29 +157,5 @@ First public release. Everything below is new.
 
 [Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.1...HEAD
 [0.2.1]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.0...v0.2.1
-[0.2.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...v0.2.0
-[0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
-
-- **CI** (`.github/workflows/ci.yml`) — rustfmt / clippy (`-D warnings`) /
-  test on Ubuntu + Windows + macOS, plus a `cargo doc` gate on broken
-  intra-doc links.
-- **188 tests** (167 unit + 21 integration) covering every collector with
-  real JSONL / SQLite fixtures and full CLI-to-DB round trips.
-- **Strict clippy lint floor**: `unwrap_used`, `expect_used`,
-  `print_stdout`, `print_stderr`, `clone_on_ref_ptr`, `dbg_macro`, and
-  style denials all turned on project-wide.
-
-### Known limitations
-
-- **Windsurf** sessions required a companion VSCode extension to capture;
-  the initial `v0.1.0` release shipped a stub collector. See the
-  `[0.2.0]` Windsurf entries above for the follow-up that closes this gap.
-- No scrolling / pagination yet on the Sessions view — it shows the 200
-  most recent only. (Addressed in `[0.2.0]`: scrollbar + 2,000-row cap +
-  PageUp/PageDown.)
-- No per-model drill-down from the Models view; only Overview → Sessions
-  filtering is wired up. (Addressed in `[0.2.0]`.)
-
-[Unreleased]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.2.0...HEAD
 [0.2.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/compare/v0.1.0...v0.2.0
 [0.1.0]: https://cnb.cool/prevailna/agent-token-usage-tui/-/tags/v0.1.0
